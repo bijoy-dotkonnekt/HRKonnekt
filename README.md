@@ -28,31 +28,47 @@ Other demo people: Arjun Nair (joined 30 days ago), Sneha Iyer (birthday today),
 Re-seed (dates are relative to today) with `python backend/seed.py` or the **Reset demo** button in the Console.
 Check the demo flow with `.venv/bin/python backend/test_bot.py` (resets the data, needs the server running).
 
-## External agents
+## External agents (Kompass)
 
-Set `HR_AGENT_URL`, `BONDING_AGENT_URL` and `WELLNESS_AGENT_URL` in `.env`. Leave any of them empty, or set `FORCE_OFFLINE=1` (also toggled from the Console), to use the offline stub for that agent.
+The HR, Bonding and Wellness agents run in Kompass (Sangria AI Studio). Their execute URLs and the Kompass tenant/project ids are in `.env` (`HR_AGENT_URL`, `BONDING_AGENT_URL`, `WELLNESS_AGENT_URL`, `KOMPASS_TENANT_ID`, `KOMPASS_PROJECT_ID`, `AGENT_TIMEOUT`). Leave an agent URL empty, or set `FORCE_OFFLINE=1` (also toggled from the Console), to use the offline stub for it.
 
-Request we send (proposed contract):
-```json
-POST {X_AGENT_URL}
-{ "agent": "hr", "message": "...", "history": [{"role": "user|assistant", "text": "..."}], "today": "2026-11-23",
-  "user": {"name": "...", "role": "employee|manager|hr_admin", "department": "...", "designation": "..."},
-  "api_base_url": "http://localhost:8000/api/me", "api_token": "..." }
-→ { "reply": "text shown to the employee" }
+Request we send:
 ```
-Agent tools call `api_base_url` + path with `Authorization: Bearer <api_token>`. The token fixes WHO the employee is and WHICH agent is calling, and it expires after 5 minutes. Tool specs: http://localhost:8000/docs (tag "Agent tools API") or `/openapi.json`.
+POST {X_AGENT_URL}
+X-Tenant-ID: $KOMPASS_TENANT_ID
+project-id: $KOMPASS_PROJECT_ID
+X-Authorization: Bearer <api_token>
+{"task": "<employee message>", "context": {"today": "2026-11-24", "user": {"name", "role", "department", "designation"}, "history": [{"role": "user|assistant", "text": "..."}]}}
+```
+Reply: `data.result` when `success` and `data.success` are true. Otherwise the chat shows `data.error` (source "<Agent> · error"). A timeout, HTTP failure or non-JSON response falls back to the offline stub (`agent.fallback` in the audit log).
 
-| Agent | Tools (`/api/me/...`) |
-|---|---|
-| all | `GET profile` |
-| HR | `GET leave/balance`, `GET leave/requests`, `GET holidays`, `GET policies/search?q=`, `GET team/leave` (managers), `POST leave/requests` (draft → Confirm card), `POST payslip-card` (amounts go to the screen, never to the agent), `POST handover`, `POST unanswered` |
-| Bonding | `GET groups`, `POST groups/{slug}/join`, `POST groups/{slug}/leave`, `POST birthday-pref`, `GET activities` |
-| Wellness | `GET leave-gap`, `GET my-data`, `POST my-data-card` (toggles card), `POST reminders`, `POST reminders/pause`, `POST wellness-opt-in`, `POST mood` |
+The `api_token` fixes WHO the employee is and WHICH agent is calling, and it expires after 5 minutes. Tools send it back as `X-Authorization: Bearer …` or `Authorization: Bearer …`.
 
-If the agents run on another machine, `PUBLIC_API_BASE_URL` must be reachable from there (for example, through a tunnel).
+**Tunnel.** Kompass runs in the cloud, so start a tunnel to port 8000 (e.g. `ngrok http 8000`). Tools call `<tunnel>/api/tools/...`. This also exposes `/hrms` and `/bot`, which have no login; it's dummy data only.
+
+### The 13 Kompass tools (`/api/tools`)
+| Agent | Tool | Call |
+|---|---|---|
+| HR | `hrk_hr_get` | `GET /hr?what=` profile, leave_balance, leave_requests, holidays, team_leave |
+| HR | `hrk_policy_search` | `GET /policies/search?q=` (empty list = not covered) |
+| HR | `hrk_leave_draft` | `POST /leave/requests` {leave_type, start_date, end_date, reason?} → Confirm card |
+| HR | `hrk_payslip_card` | `POST /payslip-card` (amounts go to the screen, never to the agent) |
+| HR | `hrk_handover` | `POST /handover` {summary, category?}; category `unanswered` logs a question no policy covers |
+| Bonding | `hrk_bonding_get` | `GET /bonding?what=` profile, groups, activities |
+| Bonding | `hrk_group` | `POST /groups/{slug}/{action}`, action = join or leave |
+| Bonding | `hrk_birthday_pref` | `POST /birthday-pref` {show_birthday} |
+| Wellness | `hrk_wellness_get` | `GET /wellness?what=` profile, leave_gap, my_data |
+| Wellness | `hrk_my_data_card` | `POST /my-data-card` (card with toggles) |
+| Wellness | `hrk_reminder` | `POST /reminders` {kind, every_minutes}; 15+ sets it, 0 stops it (kind water, walk or all) |
+| Wellness | `hrk_wellness_opt_in` | `POST /wellness-opt-in` {opt_in} |
+| Wellness | `hrk_mood` | `POST /mood` {score 1-5}, stored by team and week with no name |
+
+Invalid values → 400 listing the valid ones. Another agent's tool → 403. A missing or expired token → 401. Specs are at http://localhost:8000/docs (tag "Kompass tools (13)").
+
+The earlier 22 single-purpose routes under `/api/me` are kept unchanged; the offline stubs use them through `PUBLIC_API_BASE_URL`.
 
 ## Safety rules (as built)
-- Identity comes from the persona switcher (a demo stand-in for sign-in), never from message text or an agent.
+- Identity comes from the demo sign-in, never from message text or an agent.
 - The guard word list catches harassment/POSH, grievances, termination, pay disputes, crisis and "talk to a human" before any agent sees the message. A handover card goes to `#hr-private`.
 - Records change only on a button tap by the right person: Confirm (the employee), then Approve/Reject (their manager). Cards close after one tap.
 - The agent API never returns salary figures. Pulse data has no names and is shown only for 5+ answers.

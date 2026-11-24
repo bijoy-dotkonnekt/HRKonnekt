@@ -26,17 +26,26 @@ def issue_token(emp_id, agent):
     return t
 
 
+def _check(token_header, tool):
+    v = TOKENS.get(token_header.removeprefix("Bearer ").strip())
+    if not v or v[2] < time.time():
+        raise HTTPException(401, "missing or expired api_token")
+    emp_id, agent, _ = v
+    if tool not in ALLOW[agent]:
+        audit(f"agent:{agent}", f"tool.refused.{tool}", emp_id)
+        raise HTTPException(403, f"the {agent} agent may not call {tool}")
+    audit(f"agent:{agent}", f"tool.{tool}", emp_id)
+    return emp_id
+
+
+def _token(authorization: str = Header("", description="Bearer <api_token from the agent request>"),
+           x_authorization: str = Header("", description="Same token; Kompass sends it in this header")):
+    return x_authorization or authorization
+
+
 def caller(tool):
-    def dep(authorization: str = Header("", description="Bearer <api_token from the agent request>")):
-        v = TOKENS.get(authorization.removeprefix("Bearer ").strip())
-        if not v or v[2] < time.time():
-            raise HTTPException(401, "missing or expired api_token")
-        emp_id, agent, _ = v
-        if tool not in ALLOW[agent]:
-            audit(f"agent:{agent}", f"tool.refused.{tool}", emp_id)
-            raise HTTPException(403, f"the {agent} agent may not call {tool}")
-        audit(f"agent:{agent}", f"tool.{tool}", emp_id)
-        return emp_id
+    def dep(token: str = Depends(_token)):
+        return _check(token, tool)
     return Depends(dep)
 
 
@@ -88,22 +97,22 @@ class LeaveDraft(BaseModel):
     leave_type: str = "CL"
     start_date: date
     end_date: date
-    reason: str = ""
+    reason: str | None = ""  # optional in the Kompass tool, may arrive as null
 
 
 @router.post("/leave/requests", summary="Draft a leave request; shows the employee a Confirm card. Dates YYYY-MM-DD; types CL, SL, EL, COMP")
 def leave_request_create(body: LeaveDraft, emp_id=caller("leave_request_create")):
-    return hrms(actions.leave_draft, emp_id, body.leave_type.upper(), body.start_date.isoformat(), body.end_date.isoformat(), body.reason)
+    return hrms(actions.leave_draft, emp_id, body.leave_type.upper(), body.start_date.isoformat(), body.end_date.isoformat(), body.reason or "")
 
 
 class Handover(BaseModel):
     summary: str
-    category: str = "general"
+    category: str | None = "general"
 
 
 @router.post("/handover", summary="Pass the conversation to a human in HR")
 def handover(body: Handover, emp_id=caller("handover")):
-    return {"handover_id": actions.create_handover(emp_id, body.category, body.summary)}
+    return {"handover_id": actions.create_handover(emp_id, body.category or "general", body.summary)}
 
 
 @router.post("/payslip-card", summary="Show the caller their latest payslip as a card. Amounts go to the employee's screen only; you get none back")
@@ -261,3 +270,54 @@ def mood(body: Mood, emp_id=caller("mood")):
         c.execute("INSERT INTO pulse_responses(team,week,score) VALUES (?,?,?)",
                   (actions.user(emp_id)["team"], f"{iso[0]}-W{iso[1]:02d}", body.score))
     return {"saved": True}
+
+
+# ---------- /api/tools: the 13 per-agent Kompass tools (the 22 /api/me routes above stay for the offline stubs) ----------
+tools = APIRouter(prefix="/api/tools", tags=["Kompass tools (13)"])
+READS = {
+    "hr": {"profile": profile, "leave_balance": leave_balance, "leave_requests": my_requests, "holidays": holidays, "team_leave": team_leave},
+    "bonding": {"profile": profile, "groups": groups, "activities": activities},
+    "wellness": {"profile": profile, "leave_gap": leave_gap, "my_data": my_data},
+}
+
+
+def _get_route(agent):
+    def get(what: str, token: str = Depends(_token)):
+        fn = READS[agent].get(what)
+        if not fn:
+            raise HTTPException(400, f"what must be one of: {', '.join(READS[agent])}")
+        return fn(emp_id=_check(token, what))
+    tools.add_api_route(f"/{agent}", get, methods=["GET"], name=f"{agent}_get",
+                        summary=f"{agent.title()} agent reads: what = {' | '.join(READS[agent])}")
+
+
+for _a in READS:
+    _get_route(_a)
+
+for _path, _fn, _m in [("/policies/search", policy_search, "GET"), ("/leave/requests", leave_request_create, "POST"),
+                       ("/payslip-card", payslip_card, "POST"), ("/birthday-pref", birthday_pref, "POST"),
+                       ("/my-data-card", my_data_card, "POST"), ("/wellness-opt-in", wellness_opt_in, "POST"), ("/mood", mood, "POST")]:
+    tools.add_api_route(_path, _fn, methods=[_m], name=f"tools_{_fn.__name__}",
+                        summary=next(r.summary for r in router.routes if r.endpoint is _fn))
+
+
+@tools.post("/handover", summary="Pass the conversation to HR. category=unanswered logs a question no policy covers (summary = the question)")
+def tools_handover(body: Handover, token: str = Depends(_token)):
+    if (body.category or "").lower() == "unanswered":
+        return unanswered(Question(question=body.summary), emp_id=_check(token, "unanswered"))
+    return handover(body, emp_id=_check(token, "handover"))
+
+
+@tools.post("/groups/{slug}/{action}", summary="Join or leave an interest group: action = join | leave")
+def tools_group(slug: str, action: str, token: str = Depends(_token)):
+    fn = {"join": group_join, "leave": group_leave}.get(action)
+    if not fn:
+        raise HTTPException(400, "action must be join or leave")
+    return fn(slug, emp_id=_check(token, f"group_{action}"))
+
+
+@tools.post("/reminders", summary="Set a water or walk reminder (15+ minutes); every_minutes=0 stops it (kind water | walk | all)")
+def tools_reminder(body: Reminder, token: str = Depends(_token)):
+    if body.every_minutes == 0:
+        return reminders_pause(Pause(kind=body.kind), emp_id=_check(token, "reminders_pause"))
+    return reminders(body, emp_id=_check(token, "reminders"))

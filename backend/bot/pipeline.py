@@ -43,23 +43,41 @@ def route(text):
     return next((agent for agent, rx in ROUTES if re.search(rx, t)), "hr")
 
 
+def kompass_request(payload):
+    """Headers + body for a Kompass agent execute call."""
+    headers = {"X-Tenant-ID": os.getenv("KOMPASS_TENANT_ID", ""), "project-id": os.getenv("KOMPASS_PROJECT_ID", ""),
+               "X-Authorization": f"Bearer {payload['api_token']}"}
+    body = {"task": payload["message"],
+            "context": {k: payload[k] for k in ("today", "user", "history")}}
+    return headers, body
+
+
+def kompass_reply(res):
+    """(reply, error) from a Kompass execute response: data.result on success, data.error on failure."""
+    data = res.get("data") or {}
+    if res.get("success") and data.get("success") and data.get("result"):
+        return str(data["result"]), None
+    return None, str(data.get("error") or res.get("message") or "the agent returned no answer")
+
+
 def call_agent(agent, payload):
     url = os.getenv(f"{agent.upper()}_AGENT_URL", "").strip()
     if url and os.getenv("FORCE_OFFLINE", "0") != "1":
         try:
-            r = httpx.post(url, json={**payload, "agent": agent}, timeout=float(os.getenv("AGENT_TIMEOUT", "20")))
-            r.raise_for_status()
-            try:
-                data = r.json()
-                if isinstance(data, dict):
-                    reply = data.get("reply") or data.get("output") or data.get("text") or data.get("response")
-                else:
-                    reply = str(data)
-            except ValueError:
-                reply = r.text
+            headers, body = kompass_request(payload)
+            r = httpx.post(url, json=body, headers=headers, timeout=float(os.getenv("AGENT_TIMEOUT", "60")))
+            log.info("agent %s → %s %s", agent, r.status_code, r.text[:500])
+            res = r.json()
+            data = res.get("data") or {}
+            meta = data.get("metadata") or {}
+            if meta.get("refused_tools") or meta.get("pending_tools"):
+                audit("system", "agent.tools", agent, {k: meta.get(k) for k in ("refused_tools", "pending_tools")})
+            reply, err = kompass_reply(res)
             if reply:
-                return str(reply), LABEL[agent]
-        except Exception as e:  # any failure → offline answer for this message
+                return reply, LABEL[agent]
+            audit("system", "agent.error", agent, {"error": err[:300], "correlation_id": res.get("correlation_id")})
+            return f"Sorry, the {LABEL[agent]} couldn't answer: {err}", f"{LABEL[agent]} · error"
+        except Exception as e:  # timeout, HTTP or JSON failure → offline answer for this message
             log.warning("agent %s failed, using offline: %s", agent, e)
             audit("system", "agent.fallback", agent, {"error": str(e)[:200]})
     return offline_agent.run(agent, payload), f"{LABEL[agent]} · offline"
