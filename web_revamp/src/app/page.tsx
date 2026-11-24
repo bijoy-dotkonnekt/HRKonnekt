@@ -1,13 +1,13 @@
 "use client";
-// Sign-in page. Demo login only: the email picks the account, any password is accepted.
+// Sign-in page. The backend checks the email and password; every current employee has an account.
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button, Face, Hydrated, Mark, ThemeToggle, greeting } from "@/components/ui";
-import { ACCOUNTS } from "@/lib/data";
-import { signIn, useSession } from "@/lib/store";
+import { signIn, useFetch, useSession } from "@/lib/store";
 
 const field = "min-h-12 w-full rounded-xl border border-line bg-ground px-4 text-sm outline-none placeholder:text-muted focus:border-gold";
+type Demo = { accounts: { id: string; name: string; email: string; label: string }[]; email_placeholder: string; password_hint: string };
 
 export default function LoginPage() {
   return (
@@ -19,24 +19,29 @@ export default function LoginPage() {
 
 function Login() {
   const router = useRouter();
-  const user = useSession();
+  const session = useSession();
+  const demo = useFetch<Demo>("/auth/demo-accounts");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
   // Already signed in in this tab: go straight to the right home page.
-  // (Demo data lives in the shared backend now; reset it from the HRKonnekt Console.)
   useEffect(() => {
-    const acc = ACCOUNTS.find((a) => a.id === user);
-    if (acc) router.replace(acc.home);
-  }, [user, router]);
+    if (session) router.replace(session.home);
+  }, [session, router]);
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const acc = ACCOUNTS.find((a) => a.email === email.trim().toLowerCase());
-    if (!acc) return setError("No account uses that email. Pick one of the accounts below.");
-    if (!password) return setError("Enter your password.");
-    signIn(acc.id);
+    if (!email.trim() || !password) return setError("Enter your work email and password.");
+    setBusy(true);
+    try {
+      router.replace(await signIn(email.trim(), password));
+    } catch (x) {
+      setError((x as Error).message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -62,7 +67,7 @@ function Login() {
                 setEmail(e.target.value);
                 setError("");
               }}
-              placeholder="you@dotkonnekt.example"
+              placeholder={demo?.email_placeholder}
               className={field}
             />
           </label>
@@ -84,17 +89,17 @@ function Login() {
               {error}
             </p>
           )}
-          <Button type="submit" className="min-h-12">
-            Sign in
+          <Button type="submit" className="min-h-12" disabled={busy}>
+            {busy ? "Signing in" : "Sign in"}
           </Button>
         </form>
 
-        <section className="mt-6">
-          <h2 className="mb-2 text-sm text-muted">Accounts</h2>
-          <ul className="grid gap-2">
-            {ACCOUNTS.map((a) => {
-              const p = a;
-              return (
+        {demo && demo.accounts.length > 0 && (
+          <section className="mt-6">
+            <h2 className="mb-1 text-sm text-muted">Demo accounts</h2>
+            <p className="mb-2 text-xs text-muted">{demo.password_hint}</p>
+            <ul className="grid gap-2">
+              {demo.accounts.map((a) => (
                 <li key={a.id}>
                   <button
                     type="button"
@@ -104,18 +109,18 @@ function Login() {
                     }}
                     className={`press flex min-h-14 w-full items-center gap-3 rounded-[16px] border bg-cell px-4 text-left ${email === a.email ? "border-gold" : "border-line hover:border-gold"}`}
                   >
-                    <Face name={p.name} size={36} />
+                    <Face name={a.name} size={36} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium">{p.name}</span>
+                      <span className="block text-sm font-medium">{a.name}</span>
                       <span className="block truncate text-xs text-muted">{a.email}</span>
                     </span>
                     <span className="text-sm text-gold">{a.label}</span>
                   </button>
                 </li>
-              );
-            })}
-          </ul>
-        </section>
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
     </main>
   );

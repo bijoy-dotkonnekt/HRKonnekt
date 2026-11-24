@@ -115,9 +115,11 @@ def handle(emp_id, conversation_id, text):
         api_token=issue_token(emp_id, agent),
     )
     audit(emp_id, "router.route", agent)
+    # Reserve the reply's place first: cards the agent's tools post while it works land after it, so the text reads above its card.
+    slot = channel.dm(emp_id, "", source=LABEL[agent])
     try:
         reply, source = call_agent(agent, payload)
     except Exception as e:
         log.exception("offline agent failed")
         reply, source = f"Sorry, something went wrong on my side ({e.__class__.__name__}). Please try again.", "System"
-    channel.dm(emp_id, reply, source=source)
+    channel.set_text(slot, reply, source)

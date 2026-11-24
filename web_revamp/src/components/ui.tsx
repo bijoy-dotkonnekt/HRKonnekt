@@ -2,7 +2,7 @@
 // Shared Konnekt Noir building blocks for both frontends.
 
 import { useState, useSyncExternalStore } from "react";
-import type { Agent } from "@/lib/store";
+import { agentInfo, useStore, type Agent } from "@/lib/store";
 
 const noop = () => () => {};
 // Renders children only in the browser. The demo data counts from today and lives in localStorage,
@@ -37,17 +37,16 @@ export function Face({ name, size = 32 }: { name: string; size?: number }) {
   );
 }
 
-export const agentName: Record<Agent, string> = { hr: "HR agent", bonding: "Bonding agent", wellness: "Wellness agent", guard: "Guard" };
-const agentGlyph: Record<Agent, string> = { hr: "H", bonding: "B", wellness: "W", guard: "G" };
-
+// Agent names and glyphs come from the backend (meta.agents).
 export function AgentFace({ agent, size = 32 }: { agent: Agent; size?: number }) {
+  const info = agentInfo(useStore(), agent);
   return (
     <span
       className={`grid shrink-0 place-items-center rounded-full font-display font-semibold ${agent === "guard" ? "bg-gold-soft text-gold" : "bg-violet-soft text-violet"}`}
       style={{ width: size, height: size, fontSize: size * 0.4 }}
       aria-hidden
     >
-      {agentGlyph[agent]}
+      {info?.glyph ?? "?"}
     </span>
   );
 }
@@ -107,20 +106,20 @@ const Check = () => (
 );
 
 // One meaning, one shape: hollow ring = waiting on a person, check = done, cross = declined.
-export function Status({ status, waitingOn }: { status: "pending" | "approved" | "rejected" | "open" | "resolved"; waitingOn?: string }) {
-  if (status === "approved" || status === "resolved")
+export function Status({ status, waitingOn }: { status: string; waitingOn?: string | null }) {
+  if (status === "approved" || status === "resolved" || status === "paid")
     return (
       <span className="inline-flex items-center gap-1 whitespace-nowrap text-sm text-green">
-        <Check /> {status === "approved" ? "Approved" : "Resolved"}
+        <Check /> {status === "approved" ? "Approved" : status === "paid" ? "Paid" : "Resolved"}
       </span>
     );
-  if (status === "rejected")
+  if (status === "rejected" || status === "cancelled")
     return (
       <span className="inline-flex items-center gap-1 whitespace-nowrap text-sm text-red">
         <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden>
           <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </svg>
-        Declined
+        {status === "cancelled" ? "Cancelled" : "Declined"}
       </span>
     );
   return (

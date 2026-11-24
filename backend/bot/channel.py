@@ -37,3 +37,9 @@ def update_card(card):
 def close_card(card, result):
     card.update(state="closed", result=result)
     return update_card(card)
+
+
+def set_text(message_id, text, source=None):
+    """Fill in a message posted empty (a reserved reply slot)."""
+    with db(BOT_DB) as c:
+        c.execute("UPDATE messages SET text=?, source=COALESCE(?, source), created_at=? WHERE id=?", (text, source, now(), message_id))

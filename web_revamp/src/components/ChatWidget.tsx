@@ -4,30 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Message } from "@/components/ChatParts";
 import { Button, Mark } from "@/components/ui";
-import { type Role } from "@/lib/data";
-import { dm, sendMessage, useStore, type State } from "@/lib/store";
-
-// Every suggestion here is a phrase the offline agents handle (checked against the backend stubs).
-const suggestions: Record<Role, string[]> = {
-  employee: ["How many leaves do I have left?", "Apply casual leave next Friday", "Show my payslip", "Upcoming holidays", "Can I work from home on Fridays?", "Join running", "Remind me to drink water every 60 minutes", "What do you know about me?", "Is there pet adoption leave?", "I'm being harassed by a colleague"],
-  manager: ["Who in my team is on leave this week?", "How many leaves do I have left?", "Upcoming holidays", "Join running"],
-  newjoiner: ["How do I claim reimbursement?", "Can I carry forward casual leave?", "I want to talk to someone in HR"],
-  hr: ["Upcoming holidays", "Can I carry forward casual leave?"],
-  hradmin: ["Upcoming holidays", "Can I carry forward casual leave?", "How many leaves do I have left?", "What do you know about me?"],
-};
-
-// Channels come from the backend: your DM, #general, groups you joined, and #hr-private for HR admins.
-function channelsFor(s: State, pid: string) {
-  return s.conversations.map((c) =>
-    c.id === dm(pid)
-      ? { id: c.id, name: "HRKonnekt", sub: "Private. Your manager can't see this." }
-      : c.id === "general"
-        ? { id: c.id, name: "#general", sub: "Everyone in the company" }
-        : c.id === "hr-private"
-          ? { id: c.id, name: "#hr-private", sub: "HR only. Messages the bot held back." }
-          : { id: c.id, name: `#${c.name}`, sub: `${s.groups[c.id]?.length ?? 0} members` },
-  );
-}
+import { dm, sendMessage, useStore } from "@/lib/store";
 
 export function ChatWidget({ pid }: { pid: string }) {
   const s = useStore();
@@ -38,22 +15,21 @@ export function ChatWidget({ pid }: { pid: string }) {
   // person count as unread, so an approval waiting for a manager shows on the bubble straight away.
   const [seen, setSeen] = useState<Record<string, number>>(() =>
     Object.fromEntries(
-      channelsFor(s, pid).map((c) => {
+      s.conversations.map((c) => {
         const ms = s.messages.filter((m) => m.ch === c.id);
-        return [c.id, ms.length - ms.filter((m) => m.card && m.canAct && !m.done && m.card.kind !== "myData").length];
+        return [c.id, ms.length - ms.filter((m) => m.card && m.canAct && !m.done && m.card.buttons?.length && m.card.kind !== "my_data").length];
       }),
     ),
   );
   const endRef = useRef<HTMLDivElement>(null);
 
-  const channels = channelsFor(s, pid);
+  const channels = s.conversations;
   const active = channels.find((c) => c.id === ch) ?? channels[0];
   const msgs = s.messages.filter((m) => m.ch === active.id);
   const typing = s.typing.includes(active.id);
   const count = (c: string) => s.messages.filter((m) => m.ch === c).length;
   const unread = (c: string) => (open && c === active.id ? 0 : Math.max(0, count(c) - (seen[c] ?? 0)));
   const totalUnread = channels.reduce((n, c) => n + unread(c.id), 0);
-  const role = s.me.role;
 
   useEffect(() => {
     if (open) endRef.current?.scrollIntoView({ block: "end" });
@@ -125,7 +101,7 @@ export function ChatWidget({ pid }: { pid: string }) {
           <div className="border-t border-line bg-cell px-3 py-3">
             {active.id === dm(pid) && (
               <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
-                {suggestions[role].map((q) => (
+                {s.meta.suggestions.map((q) => (
                   <button key={q} onClick={() => send(q)} className="press shrink-0 rounded-full border border-line px-3 py-1.5 text-xs text-muted hover:text-ink">
                     {q}
                   </button>

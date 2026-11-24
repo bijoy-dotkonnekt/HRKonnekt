@@ -1,27 +1,29 @@
 "use client";
 
 import { useState } from "react";
-import { PulseBars, rowsFor } from "@/components/PulseBars";
-import { AgentFace, Button, Card, PageHeader, Status, agentName } from "@/components/ui";
-import { MIN_TEAM, empById, fmtTime } from "@/lib/data";
-import { JOBS, resetDemo, resolveHandover, runJob, setOffline, useMe, useStore, type Agent } from "@/lib/store";
+import { PulseBars } from "@/components/PulseBars";
+import { AgentFace, Button, Card, PageHeader, Status } from "@/components/ui";
+import { fmtTime } from "@/lib/data";
+import { resetDemo, resolveHandover, runJob, setOffline, useStore } from "@/lib/store";
 
 export default function ConsolePage() {
   const s = useStore();
-  const ME = useMe();
   const [ran, setRan] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState("");
   const [confirmReset, setConfirmReset] = useState(false);
   const open = s.handovers.filter((h) => h.status === "open");
-  const offline = s.config.force_offline;
+  const config = s.config ?? { force_offline: false, agents: {} };
+  const offline = config.force_offline;
+  // The agents that can be external: every agent the backend has a URL setting for.
+  const external = s.meta.agents.filter((a) => a.id in config.agents);
 
   return (
     <>
       <PageHeader title="HRKonnekt Console" sub="What the bot handed to people, what it couldn't answer, and the timed jobs.">
         <div className="flex flex-wrap items-center gap-2">
-          {(["hr", "bonding", "wellness"] as const).map((a) => (
-            <span key={a} className={`rounded-full px-3 py-1 text-xs ${s.config.agents[a] && !offline ? "bg-violet-soft text-violet" : "bg-raised text-muted"}`}>
-              {agentName[a]}: {s.config.agents[a] && !offline ? "external" : "offline stub"}
+          {external.map((a) => (
+            <span key={a.id} className={`rounded-full px-3 py-1 text-xs ${config.agents[a.id] && !offline ? "bg-violet-soft text-violet" : "bg-raised text-muted"}`}>
+              {a.name}: {config.agents[a.id] && !offline ? "external" : "offline stub"}
             </span>
           ))}
           <Button variant="ghost" onClick={() => setOffline(!offline)}>
@@ -54,7 +56,7 @@ export default function ConsolePage() {
       <div className="grid gap-4 px-4 md:px-8">
         <Card title="Run a job now" aside="The scheduler runs these on a timer. In the demo, run them here.">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {JOBS.map((j) => (
+            {s.meta.jobs.map((j) => (
               <div key={j.name} className="flex flex-col gap-2 rounded-[16px] bg-raised p-4">
                 <div className="font-display font-semibold">{j.label}</div>
                 <p className="flex-1 text-xs text-muted">{j.what}</p>
@@ -89,12 +91,12 @@ export default function ConsolePage() {
                       {h.topic}
                     </div>
                     <div className="text-xs text-muted">
-                      {empById(h.empId)?.name}, {fmtTime(h.at)}, {h.category}, <span className="font-mono">#{h.id}</span>
+                      {h.employeeName}, {fmtTime(h.at)}, {h.category}, <span className="font-mono">#{h.id}</span>
                       {h.assignedName && h.status !== "open" ? `, by ${h.assignedName}` : ""}
                     </div>
                   </div>
                   {h.status === "open" ? (
-                    <Button variant="ghost" onClick={() => resolveHandover(h.id, ME)}>
+                    <Button variant="ghost" onClick={() => resolveHandover(h.id)}>
                       Mark resolved
                     </Button>
                   ) : (
@@ -121,18 +123,18 @@ export default function ConsolePage() {
           </Card>
 
           <Card title="Company pulse" aside="Team and week only, never names">
-            <PulseBars rows={rowsFor(s.pulse)} min={MIN_TEAM} />
+            <PulseBars rows={s.pulse.company} min={s.meta.pulse.min_answers} max={s.meta.pulse.scale_max} />
           </Card>
 
           <Card title="Usage">
             <ul className="space-y-3">
-              {(Object.keys(s.usage) as Agent[]).map((a) => (
-                <li key={a} className="flex items-center gap-3 text-sm">
-                  <AgentFace agent={a} size={28} />
+              {s.usage.map((u) => (
+                <li key={u.agent} className="flex items-center gap-3 text-sm">
+                  <AgentFace agent={u.agent} size={28} />
                   <span className="flex-1">
-                    {agentName[a]} <span className="text-xs text-muted">{a === "guard" ? "messages held back" : "tool calls"}</span>
+                    {u.name} <span className="text-xs text-muted">{u.what}</span>
                   </span>
-                  <span className="font-display font-semibold">{s.usage[a]}</span>
+                  <span className="font-display font-semibold">{u.count}</span>
                 </li>
               ))}
             </ul>
@@ -141,7 +143,7 @@ export default function ConsolePage() {
               {s.audit.map((a, i) => (
                 <li key={i} className="flex justify-between gap-3">
                   <span>
-                    <span className="font-medium">{/^\d+$/.test(a.who) ? (empById(a.who)?.name ?? a.who) : a.who}</span> <span className="font-mono text-xs text-muted">{a.what}</span>
+                    <span className="font-medium">{a.who}</span> <span className="font-mono text-xs text-muted">{a.what}</span>
                   </span>
                   <span className="whitespace-nowrap text-xs text-muted">{fmtTime(a.at)}</span>
                 </li>

@@ -1,31 +1,21 @@
-// Shared types and helpers. People come from the backend (/bot/ui-state); store.ts fills the cache below.
+// Shared types and display helpers. All data comes from the backend (/bot/ui-state, /bot/meta, /hrms/*); store.ts fills the people cache.
 
-export type Role = "employee" | "manager" | "newjoiner" | "hr" | "hradmin";
-export type LeaveType = string; // label: "Casual", "Sick", "Earned", ...
+export type Role = "employee" | "manager" | "hr_admin";
 
 export type Employee = {
   id: string; // backend emp_id, as a string
   name: string;
   title: string;
   dept: string;
-  team: string; // department code, e.g. ENG (pulse is grouped by this)
+  team: string; // department code, e.g. ENG
   location: string;
-  managerId?: string;
-  joined: string; // ISO date
-  birthday: string; // MM-DD
+  managerId?: string | null;
+  joined?: string; // ISO date; HR only
   status: string;
 };
-export type Persona = Employee & { role: Role };
+export type Persona = Employee & { role: Role; email: string; home: string; is_new_joiner: boolean; location_id: number };
 
-// Leave types shown in the HRMS. Backend codes map to the revamp's labels.
-export const LEAVE_TYPES = [
-  { code: "CL", type: "Casual" },
-  { code: "SL", type: "Sick" },
-  { code: "EL", type: "Earned" },
-];
-export const leaveLabel = (code: string) => LEAVE_TYPES.find((l) => l.code === code)?.type ?? (code === "COMP" ? "Comp-off" : code === "LOP" ? "Unpaid" : code);
-
-// ---------- dates ----------
+// ---------- dates (display only) ----------
 const DAY = 86_400_000;
 export const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 export const today = () => {
@@ -35,7 +25,6 @@ export const today = () => {
 };
 export const addDays = (n: number, from = today()) => iso(new Date(from.getTime() + n * DAY));
 export const parse = (s: string) => new Date(`${s}T00:00:00`);
-export const daysBetween = (a: string, b: string) => Math.round((parse(b).getTime() - parse(a).getTime()) / DAY);
 export const fmtDate = (s: string) => parse(s).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 export const fmtShort = (s: string) => parse(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 export const fmtTime = (ms: number) => {
@@ -45,43 +34,12 @@ export const fmtTime = (ms: number) => {
 };
 export const inr = (n: number) => n.toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 
-// Working days between two dates, skipping weekends and holidays (the HRMS re-checks on submit).
-export function workingDays(start: string, end: string, holidayDates: string[]) {
-  let n = 0;
-  for (let d = parse(start); d <= parse(end); d = new Date(d.getTime() + DAY)) {
-    if (d.getDay() !== 0 && d.getDay() !== 6 && !holidayDates.includes(iso(d))) n++;
-  }
-  return n;
-}
-
 // ---------- people (cache filled by store.ts from /bot/ui-state) ----------
-// The three sign-in accounts. Any password works: this is a demo login, not authentication.
-export const ACCOUNTS = [
-  { id: "10", name: "Shabarish N P", email: "shabarish@dotkonnekt.example", label: "Employee", home: "/hrms/employee" },
-  { id: "8", name: "Lekha George", email: "lekha@dotkonnekt.example", label: "Manager", home: "/hrms/manager" },
-  { id: "15", name: "Vaishali Umredkar", email: "vaishali@dotkonnekt.example", label: "HR", home: "/hrms/admin" },
-] as const;
-
 let people: Employee[] = [];
-let demo: Persona[] = [];
-export function setPeople(e: Employee[], p: Persona[]) {
+export const setPeople = (e: Employee[]) => {
   people = e;
-  demo = p;
-}
+};
 export const employees = () => people;
-export const personas = () => demo;
-export const empById = (id: string) => people.find((e) => e.id === id);
-export const teamOf = (managerId: string) => people.filter((e) => e.managerId === managerId);
-export const firstName = (id: string) => empById(id)?.name.split(" ")[0] ?? id;
+export const empById = (id?: string | null) => people.find((e) => e.id === id);
+export const firstName = (id?: string | null) => empById(id)?.name.split(" ")[0] ?? "";
 export const depts = () => [...new Set(people.map((e) => e.dept))].sort();
-
-// ---------- static bits with no backend table (kept as dummy data) ----------
-// Average monthly gross per person by department, for the payroll page.
-export const avgGross: Record<string, number> = { Engineering: 142000, Product: 150000, Design: 118000, Sales: 96000, Marketing: 98000, HR: 98000, Finance: 104000 };
-
-export const reimbursements = [
-  { id: "RB-311", what: "Client lunch, Indiranagar", amount: 2340, filed: -6, status: "approved" as const },
-  { id: "RB-318", what: "Cab to airport", amount: 1180, filed: -2, status: "pending" as const },
-];
-
-export const MIN_TEAM = 5;

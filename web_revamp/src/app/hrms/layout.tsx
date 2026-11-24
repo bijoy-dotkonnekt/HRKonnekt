@@ -7,32 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { ChatWidget } from "@/components/ChatWidget";
 import { Button, Face, Hydrated, Mark, ThemeToggle } from "@/components/ui";
-import { ACCOUNTS } from "@/lib/data";
-import { signOut, useSession, useStore, useStoreError, type State } from "@/lib/store";
-
-type Nav = { href: string; label: string; count?: (s: State) => number };
-const navFor: Record<string, Nav[]> = {
-  "/hrms/employee": [
-    { href: "/hrms/employee", label: "Home" },
-    { href: "/hrms/employee/leave", label: "Leave" },
-    { href: "/hrms/employee/payslips", label: "Payslips" },
-    { href: "/hrms/employee/attendance", label: "Attendance" },
-    { href: "/hrms/employee/directory", label: "Directory" },
-  ],
-  "/hrms/manager": [
-    { href: "/hrms/manager", label: "Approvals", count: (s) => s.requests.filter((r) => r.status === "pending" && r.approverId === s.me.id).length },
-    { href: "/hrms/manager/team", label: "Team" },
-    { href: "/hrms/manager/pulse", label: "Pulse" },
-  ],
-  "/hrms/admin": [
-    { href: "/hrms/admin", label: "HR dashboard" },
-    { href: "/hrms/admin/employees", label: "Employees" },
-    { href: "/hrms/admin/payroll", label: "Payroll" },
-    { href: "/hrms/admin/holidays", label: "Holidays" },
-    { href: "/hrms/admin/policies", label: "Policies" },
-    { href: "/hrms/admin/console", label: "HRKonnekt Console", count: (s) => s.handovers.filter((h) => h.status === "open").length },
-  ],
-};
+import { signOut, useSession, useStore, useStoreError } from "@/lib/store";
 
 export default function HrmsLayout({ children }: LayoutProps<"/hrms">) {
   return (
@@ -47,21 +22,21 @@ function Shell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const s = useStore();
   const err = useStoreError();
-  const user = useSession();
-  const acc = ACCOUNTS.find((a) => a.id === user);
-  const allowed = !!acc && (path === acc.home || path.startsWith(`${acc.home}/`));
+  const session = useSession();
+  // The pages this person may open come from the backend (meta.nav); anything else sends them home.
+  const ready = !!session && !!s && s.me.id === session.id;
+  const allowed = ready && s.meta.nav.some((n) => n.href === path);
 
-  // Not signed in: back to the login page. Signed in but on another role's page: back to your own home.
   useEffect(() => {
-    if (!acc) router.replace("/");
-    else if (!allowed) router.replace(acc.home);
-  }, [acc, allowed, router]);
+    if (!session) router.replace("/");
+    else if (ready && !allowed) router.replace(s.meta.home);
+  }, [session, ready, allowed, s, router]);
 
-  if (!acc || !allowed || !s || s.me.id !== acc.id)
+  if (!ready || !allowed)
     return (
       <div className="grid min-h-screen place-items-center gap-3 px-4 text-center" aria-label="Loading">
         <Mark state="working" size={40} />
-        {err && <p role="alert" className="max-w-md text-sm text-red">{err} Start it with: cd backend &amp;&amp; uvicorn main:app --port 8000</p>}
+        {err && <p role="alert" className="max-w-md text-sm text-red">{err}</p>}
       </div>
     );
 
@@ -69,7 +44,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col md:h-screen md:flex-row">
       <aside className="flex shrink-0 flex-col gap-5 border-line bg-cell p-4 md:w-64 md:overflow-y-auto md:border-r">
-        <Link href={acc.home} className="flex items-center gap-2.5">
+        <Link href={s.meta.home} className="flex items-center gap-2.5">
           <Mark />
           <span className="font-display text-lg font-semibold">KonnektHRMS</span>
         </Link>
@@ -85,8 +60,8 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav className="flex gap-1 overflow-x-auto md:flex-col" aria-label="Sections">
-          {navFor[acc.home].map((n) => {
-            const c = n.count?.(s) ?? 0;
+          {s.meta.nav.map((n) => {
+            const c = n.badge ? (s.badges[n.badge] ?? 0) : 0;
             const on = path === n.href;
             return (
               <Link
@@ -110,7 +85,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
       <main className="flex-1 pb-28 md:overflow-y-auto">{children}</main>
-      <ChatWidget key={acc.id} pid={acc.id} />
+      <ChatWidget key={s.me.id} pid={s.me.id} />
     </div>
   );
 }

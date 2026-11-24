@@ -8,10 +8,11 @@ from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from db import BOT_DB, DATA, HRMS_DB, POLICIES, db  # noqa: E402
+from db import BOT_DB, DATA, HRMS_DB, POLICIES, db, load_env  # noqa: E402
 
 HRMS_SCHEMA = """
-CREATE TABLE company(id INTEGER PRIMARY KEY, name TEXT, city TEXT, leave_year_start TEXT, work_hours TEXT, payday INTEGER);
+CREATE TABLE company(id INTEGER PRIMARY KEY, name TEXT, city TEXT, leave_year_start TEXT, work_hours TEXT, payday INTEGER,
+  email_domain TEXT, wfh_per_week INTEGER, nudge_after_days INTEGER, new_joiner_days INTEGER, probation_days INTEGER, pulse_min_answers INTEGER);
 CREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT, code TEXT, head_emp_id INTEGER);
 CREATE TABLE locations(id INTEGER PRIMARY KEY, name TEXT, city TEXT, state TEXT);
 CREATE TABLE employees(id INTEGER PRIMARY KEY, emp_code TEXT UNIQUE, first_name TEXT, last_name TEXT,
@@ -19,7 +20,7 @@ CREATE TABLE employees(id INTEGER PRIMARY KEY, emp_code TEXT UNIQUE, first_name 
   designation TEXT, grade TEXT, manager_id INTEGER, location_id INTEGER, employment_type TEXT, status TEXT,
   probation_end_date TEXT, exit_date TEXT, is_hr_admin INTEGER DEFAULT 0, avatar_color TEXT);
 CREATE TABLE leave_types(id INTEGER PRIMARY KEY, code TEXT UNIQUE, name TEXT, annual_quota REAL,
-  carry_forward_max INTEGER, paid INTEGER, note TEXT);
+  carry_forward_max INTEGER, paid INTEGER, note TEXT, short_name TEXT, shown INTEGER DEFAULT 0);
 CREATE TABLE leave_openings(emp_id INTEGER, leave_type_id INTEGER, year INTEGER, opening REAL,
   PRIMARY KEY(emp_id, leave_type_id, year));
 CREATE TABLE leave_requests(id INTEGER PRIMARY KEY, emp_id INTEGER, leave_type_id INTEGER, start_date TEXT,
@@ -34,12 +35,16 @@ CREATE TABLE payslips(id INTEGER PRIMARY KEY, emp_id INTEGER, month TEXT, gross 
   lop_days REAL, lop_amount INTEGER, net_pay INTEGER);
 CREATE TABLE announcements(id INTEGER PRIMARY KEY, title TEXT, body TEXT, audience TEXT, posted_by INTEGER, posted_at TEXT);
 CREATE TABLE policies(slug TEXT PRIMARY KEY, title TEXT, version TEXT, updated_at TEXT, body_md TEXT);
+CREATE TABLE reimbursements(id INTEGER PRIMARY KEY, code TEXT UNIQUE, emp_id INTEGER, description TEXT, amount INTEGER,
+  filed_on TEXT, status TEXT, handled_by TEXT);
+CREATE TABLE payroll_runs(month TEXT PRIMARY KEY, pay_date TEXT, status TEXT, locked_by INTEGER, locked_at TEXT);
 """
 
 BOT_SCHEMA = """
 CREATE TABLE users(emp_id INTEGER PRIMARY KEY, email TEXT UNIQUE, name TEXT, role TEXT, department TEXT,
-  team TEXT, designation TEXT, manager_id INTEGER, avatar_color TEXT, demo_order INTEGER);
-CREATE TABLE conversations(id TEXT PRIMARY KEY, type TEXT, name TEXT, member_emp_id INTEGER);
+  team TEXT, designation TEXT, manager_id INTEGER, avatar_color TEXT, demo_order INTEGER, password_hash TEXT);
+CREATE TABLE sessions(token TEXT PRIMARY KEY, emp_id INTEGER, expires_at REAL);
+CREATE TABLE conversations(id TEXT PRIMARY KEY, type TEXT, name TEXT, member_emp_id INTEGER, description TEXT);
 CREATE TABLE messages(id INTEGER PRIMARY KEY, conversation_id TEXT, sender TEXT, sender_emp_id INTEGER,
   created_at TEXT, text TEXT, card_json TEXT, source TEXT);
 CREATE TABLE preferences(emp_id INTEGER PRIMARY KEY, wellness_opt_in INTEGER DEFAULT 0, birthday_opt_out INTEGER DEFAULT 0,
@@ -66,15 +71,17 @@ FIRST = {"F": "Aisha Bhavna Chitra Deepa Fatima Gayatri Harini Ishita Jaya Kavya
          "M": "Aakash Bharat Chetan Dev Farhan Gaurav Harsh Imran Jatin Kunal Manish Naveen Omkar Pranav Rajat Sameer Tarun Varun Yash Zaid".split()}
 LAST = "Agarwal Bhat Chatterjee Das Fernandes Ghosh Hegde Jain Kamath Mishra Naidu Patil Qureshi Rajan Saxena Thakur Varghese Wadhwa Yadav Shetty".split()
 COLORS = ["#0C7A64", "#3056D3", "#B5476B", "#C77D1A", "#6B4FBB", "#2B8A9E", "#8A5A2B"]
-LEAVE_TYPES = [  # id, code, name, quota, carry_fwd, paid, note
-    (1, "CL", "Casual Leave", 12, 0, 1, "Lapses 31 Dec"), (2, "SL", "Sick Leave", 12, 0, 1, "Note needed after 2 days"),
-    (3, "EL", "Earned Leave", 15, 30, 1, "Accrues 1.25 a month"), (4, "COMP", "Comp-off", 0, 0, 1, "Use within 30 days"),
-    (5, "LOP", "Loss of Pay", 0, 0, 0, "Deducted in payslip"), (6, "MAT", "Maternity Leave", 182, 0, 1, "Illustrative; verify statutory rules"),
-    (7, "PAT", "Paternity Leave", 5, 0, 1, "Company choice"),
+LEAVE_TYPES = [  # id, code, name, quota, carry_fwd, paid, note, short name, shown in balances and the leave form
+    (1, "CL", "Casual Leave", 12, 0, 1, "Lapses 31 Dec", "Casual", 1), (2, "SL", "Sick Leave", 12, 0, 1, "Note needed after 2 days", "Sick", 1),
+    (3, "EL", "Earned Leave", 15, 30, 1, "Accrues 1.25 a month", "Earned", 1), (4, "COMP", "Comp-off", 0, 0, 1, "Use within 30 days", "Comp-off", 0),
+    (5, "LOP", "Loss of Pay", 0, 0, 0, "Deducted in payslip", "Unpaid", 0), (6, "MAT", "Maternity Leave", 182, 0, 1, "Illustrative; verify statutory rules", "Maternity", 0),
+    (7, "PAT", "Paternity Leave", 5, 0, 1, "Company choice", "Paternity", 0),
 ]
+COMPANY = dict(name="DotKonnekt", city="Bengaluru", leave_year_start="01-01", work_hours="09:30-18:30", payday=30,
+               email_domain="dotkonnekt.example", wfh_per_week=2, nudge_after_days=90, new_joiner_days=45, probation_days=182, pulse_min_answers=5)
+CLAIMS = ["Client lunch", "Cab to airport", "Internet bill", "Conference ticket", "Team dinner", "Books for work", "Hotel stay"]
 CTC_BAND = {"L1": (300000, 500000), "L2": (600000, 900000), "L3": (1000000, 1600000), "L4": (1800000, 2800000),
             "L5": (3000000, 4500000), "L6": (5000000, 7000000), "L7": (8000000, 9000000)}
-TDS_PCT = {"L1": 0, "L2": 0.03, "L3": 0.06, "L4": 0.14, "L5": 0.18, "L6": 0.22, "L7": 0.25}
 DESIG = {"ENG": "Software Engineer", "PRD": "Product Manager", "DES": "Product Designer", "SAL": "Account Executive",
          "MKT": "Marketing Specialist", "HR": "HR Executive", "FIN": "Finance Analyst"}
 
@@ -95,6 +102,9 @@ def years_ago(d, n, day_shift=0):
 
 
 def main():
+    load_env()
+    from auth import demo_password, hash_pw
+    from hrms.api import salary_from_ctc
     rnd = random.Random(42)
     D = date.today()
     DATA.mkdir(exist_ok=True)
@@ -197,12 +207,13 @@ def main():
     for i, e in enumerate(emps, start=1):
         e["id"] = i
         e["emp_code"] = f"DK-{1000 + i}"
-        e["work_email"] = (f"{e['key']}@dotkonnekt.example" if e["key"] in DEMO_KEYS  # sign-in emails for the demo accounts
-                           else f"{e['first_name'].lower()}.{e['last_name'].lower().replace(' ', '')}@dotkonnekt.example")
+        dom = COMPANY["email_domain"]
+        e["work_email"] = (f"{e['key']}@{dom}" if e["key"] in DEMO_KEYS  # sign-in emails for the demo accounts
+                           else f"{e['first_name'].lower()}.{e['last_name'].lower().replace(' ', '')}@{dom}")
         e["phone"] = f"+91 90000 {10000 + i}"
         e["avatar_color"] = COLORS[i % len(COLORS)]
         doj = date.fromisoformat(e["date_of_joining"])
-        e["probation_end_date"] = (doj + timedelta(days=182)).isoformat() if e["status"] == "probation" else None
+        e["probation_end_date"] = (doj + timedelta(days=COMPANY["probation_days"])).isoformat() if e["status"] == "probation" else None
     for e in emps:
         e["manager_id"] = e["manager"]["id"] if e["manager"] else None
     by_key = {e["key"]: e for e in emps if e["key"]}
@@ -313,11 +324,10 @@ def main():
         lo, hi = CTC_BAND[e["grade"]]
         ctc = 2400000 if e is shabarish else round(rnd.randint(lo, hi), -4)
         monthly = ctc // 12
-        basic = round(monthly * 0.4)
-        hra = round(basic * 0.4)
-        special = monthly - basic - hra
-        pf, pt, tds = 1800, 200, round(monthly * TDS_PCT[e["grade"]], -2)
-        sal.append((e["id"], date(D.year if D.month >= 4 else D.year - 1, 4, 1).isoformat(), ctc, basic, hra, special, pf, pt, tds))
+        st = salary_from_ctc(ctc, e["grade"])
+        pf, pt, tds = st["employee_pf"], st["professional_tax"], st["tds"]
+        sal.append((e["id"], date(D.year if D.month >= 4 else D.year - 1, 4, 1).isoformat(), ctc, st["basic"], st["hra"],
+                    st["special_allowance"], pf, pt, tds))
         doj = date.fromisoformat(e["date_of_joining"])
         m = date(D.year, D.month, 1)
         for _ in range(6):
@@ -329,6 +339,22 @@ def main():
             ded = pf + pt + tds
             slips.append((e["id"], m.strftime("%Y-%m"), monthly, ded, lop, lop_amt, monthly - ded - lop_amt))
 
+    # ---------- payroll runs + reimbursement claims ----------
+    import calendar
+    pay_date = lambda m: date(m.year, m.month, min(COMPANY["payday"], calendar.monthrange(m.year, m.month)[1])).isoformat()
+    months = sorted({s_[1] for s_ in slips})
+    runs = [(m, pay_date(date.fromisoformat(m + "-01")), "paid", None, None) for m in months]
+    runs.append((D.strftime("%Y-%m"), pay_date(D), "open", None, None))
+    claims = []
+    for e in emps:
+        if e["status"] == "exited":
+            continue
+        for _ in range(rnd.choice([0, 1, 1, 2, 3])):
+            filed = D - timedelta(days=rnd.randint(1, 75))
+            status = "pending" if filed > D - timedelta(days=7) else rnd.choice(["approved", "paid", "paid", "rejected"])
+            claims.append((f"RB-{300 + len(claims) + 1}", e["id"], rnd.choice(CLAIMS), round(rnd.randint(400, 9000), -1), filed.isoformat(), status, "Finance"))
+    claims.sort(key=lambda c_: c_[4])
+
     # ---------- policies ----------
     pols = []
     for f in sorted(POLICIES.glob("*.md")):
@@ -338,13 +364,13 @@ def main():
 
     with db(HRMS_DB) as c:
         c.executescript(HRMS_SCHEMA)
-        c.execute("INSERT INTO company VALUES (1,'DotKonnekt','Bengaluru','01-01','09:30-18:30',30)")
+        c.execute(f"INSERT INTO company(id,{','.join(COMPANY)}) VALUES (1,{','.join('?' * len(COMPANY))})", list(COMPANY.values()))
         c.executemany("INSERT INTO departments VALUES (?,?,?,?)", [(d, n, code, heads[d]["id"]) for d, n, code, _ in DEPTS])
         c.executemany("INSERT INTO locations VALUES (?,?,?,?)", [(1, "Bengaluru HQ", "Bengaluru", "Karnataka"), (2, "Pune", "Pune", "Maharashtra"), (3, "Remote", None, None)])
         cols = ["id", "emp_code", "first_name", "last_name", "work_email", "phone", "gender", "dob", "date_of_joining", "department_id",
                 "designation", "grade", "manager_id", "location_id", "employment_type", "status", "probation_end_date", "exit_date", "is_hr_admin", "avatar_color"]
         c.executemany(f"INSERT INTO employees({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", [[e[k] for k in cols] for e in emps])
-        c.executemany("INSERT INTO leave_types VALUES (?,?,?,?,?,?,?)", LEAVE_TYPES)
+        c.executemany("INSERT INTO leave_types VALUES (?,?,?,?,?,?,?,?,?)", LEAVE_TYPES)
         c.executemany("INSERT INTO leave_openings VALUES (?,?,?,?)",
                       [(e["id"], 3, D.year, 9 if e is shabarish else rnd.choice([0, 3, 6, 9, 12])) for e in emps])
         rc = ["id", "emp_id", "leave_type_id", "start_date", "end_date", "days", "reason", "status", "approver_id", "applied_at", "decided_at", "source"]
@@ -360,6 +386,8 @@ def main():
             ("Q4 town hall", "Town hall this Friday at 4pm in the Bengaluru HQ cafeteria and on video.", "all", ceo["id"], (D - timedelta(days=1)).isoformat()),
         ])
         c.executemany("INSERT INTO policies VALUES (?,?,?,?,?)", pols)
+        c.executemany("INSERT INTO reimbursements(code,emp_id,description,amount,filed_on,status,handled_by) VALUES (?,?,?,?,?,?,?)", claims)
+        c.executemany("INSERT INTO payroll_runs VALUES (?,?,?,?,?)", runs)
 
     # ---------- bot store ----------
     has_reports = {e["manager_id"] for e in emps if e["manager_id"]}
@@ -369,11 +397,13 @@ def main():
     for e in active:
         role = "hr_admin" if e["is_hr_admin"] else "manager" if e["id"] in has_reports else "employee"
         users.append((e["id"], e["work_email"], f"{e['first_name']} {e['last_name']}", role, dept_name[e["department_id"]][0],
-                      dept_name[e["department_id"]][1], e["designation"], e["manager_id"], e["avatar_color"], demo_order.get(e["key"], 99)))
+                      dept_name[e["department_id"]][1], e["designation"], e["manager_id"], e["avatar_color"], demo_order.get(e["key"], 99),
+                      hash_pw(demo_password())))
     groups = [(1, "badminton", "Badminton"), (2, "cricket", "Cricket"), (3, "book-club", "Book Club"), (4, "running", "Running"), (5, "board-games", "Board Games")]
-    convs = [(f"dm-{e['id']}", "dm", "HRKonnekt", e["id"]) for e in active]
-    convs += [("general", "channel", "general", None), ("hr-private", "channel", "hr-private", None)]
-    convs += [(slug, "channel", slug, None) for _, slug, _ in groups]
+    convs = [(f"dm-{e['id']}", "dm", "HRKonnekt", e["id"], "Private. Your manager can't see this.") for e in active]
+    convs += [("general", "channel", "general", None, "Everyone in the company"),
+              ("hr-private", "channel", "hr-private", None, "HR only. Messages the bot held back.")]
+    convs += [(slug, "channel", slug, None, None) for _, slug, _ in groups]
     members = []
     badminton = [shabarish, lekha, kiran, nikhil, divya, karthik, vikram]
     for e in badminton:
@@ -404,8 +434,8 @@ def main():
     ]
     with db(BOT_DB) as c:
         c.executescript(BOT_SCHEMA)
-        c.executemany("INSERT INTO users VALUES (?,?,?,?,?,?,?,?,?,?)", users)
-        c.executemany("INSERT INTO conversations VALUES (?,?,?,?)", convs)
+        c.executemany("INSERT INTO users VALUES (?,?,?,?,?,?,?,?,?,?,?)", users)
+        c.executemany("INSERT INTO conversations VALUES (?,?,?,?,?)", convs)
         c.executemany("INSERT INTO messages(conversation_id,sender,sender_emp_id,created_at,text,card_json,source) VALUES (?,?,?,?,?,?,?)", msgs)
         c.executemany("INSERT INTO preferences(emp_id,wellness_opt_in,birthday_opt_out) VALUES (?,?,?)",
                       [(e["id"], 1 if e is shabarish or rnd.random() < 0.4 else 0, 0) for e in active])

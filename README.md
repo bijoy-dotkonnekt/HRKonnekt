@@ -5,7 +5,8 @@ All data is fictional (DotKonnekt, 60 employees, `@dotkonnekt.example` emails).
 
 ```
 web_revamp (Next.js :3000)                 backend (FastAPI :8000)
-  KonnektHRMS pages ── GET /bot/ui-state (one 3s poll) + /hrms/*
+  sign-in ── POST /auth/login → session token (Bearer on every call)
+  KonnektHRMS pages ── GET /bot/meta (labels, nav, rules) + /bot/ui-state (one 3s poll, scoped by role) + /hrms/*
   chat bubble ── POST /bot/messages ─▶ identity → guard → router ─▶ HR / Bonding / Wellness agent (external URL, offline stub fallback)
   Console ── /bot/admin/*, /bot/jobs/*                                │ agent tools call /api/me/* (Bearer api_token)
                                    button taps → /bot/actions (no AI) ▼ → HRMS adapter → /hrms (KonnektHRMS, hrms.db)
@@ -22,11 +23,20 @@ cd backend && ../.venv/bin/uvicorn main:app --port 8000 --reload --reload-exclud
 cd web_revamp && npm ci && npx next dev -p 3000
 ```
 
-Open http://localhost:3000 in two tabs and sign in as different people (each tab keeps its own login; any password works):
-`shabarish@dotkonnekt.example` (employee), `lekha@dotkonnekt.example` (manager), `vaishali@dotkonnekt.example` (HR).
-Other demo people: Arjun Nair (joined 30 days ago), Sneha Iyer (birthday today), Vikram Das (badminton), Karthik Reddy (5-year anniversary).
-Re-seed (dates are relative to today) with `python backend/seed.py` or the **Reset demo** button in the Console.
-Check the demo flow with `.venv/bin/python backend/test_bot.py` (resets the data, needs the server running).
+Open http://localhost:3000 in two tabs and sign in as different people (each tab keeps its own login).
+Every current employee (59) has an account: their work email plus the demo password (`DEMO_PASSWORD` in `.env`, default `demo`).
+Demo cast: `shabarish@dotkonnekt.example` (employee), `lekha@dotkonnekt.example` (manager), `vaishali@dotkonnekt.example` (HR),
+Arjun Nair (joined 30 days ago), Sneha Iyer (birthday today), Vikram Das (badminton), Karthik Reddy (5-year anniversary). Everyone else: `first.last@dotkonnekt.example`.
+HR adds someone who just joined from **Employees → Add employee**: KonnektHRMS record, work email, sign-in account (demo password), HRKonnekt DM.
+Re-seed (dates are relative to today) with `python backend/seed.py` or the **Reset demo** button in the Console (HR only; sign-ins survive).
+Check the demo flow with `.venv/bin/python backend/test_bot.py` (resets the data, needs the server running and seeded).
+
+### Who may see what (enforced by the backend)
+- **Nothing is hardcoded in the frontend.** Labels, leave types, nav per role, jobs, agents, chat suggestions, company rules come from `/bot/meta`; leave day counts and balance checks from `/hrms/leave/preview`; payroll, reimbursements, events, attendance and team summaries from `/hrms/*`.
+- Every `/bot` and `/hrms` call needs a session (`Authorization: Bearer`). The bot's own calls to `/hrms` use an internal service key.
+- Employee: own leave, payslips, reimbursements, attendance; the directory (no phone, birthday or salary).
+- Manager: plus their direct reports' leave, balances and attendance (never their pay) and the team pulse average.
+- HR admin: everything, plus Console, jobs, reset, holidays, payroll lock, policy upload, adding employees.
 
 ## External agents (Kompass)
 
@@ -68,7 +78,7 @@ Invalid values → 400 listing the valid ones. Another agent's tool → 403. A m
 The earlier 22 single-purpose routes under `/api/me` are kept unchanged; the offline stubs use them through `PUBLIC_API_BASE_URL`.
 
 ## Safety rules (as built)
-- Identity comes from the demo sign-in, never from message text or an agent.
+- Identity comes from the signed-in session, never from message text, a request field or an agent.
 - The guard word list catches harassment/POSH, grievances, termination, pay disputes, crisis and "talk to a human" before any agent sees the message. A handover card goes to `#hr-private`.
 - Records change only on a button tap by the right person: Confirm (the employee), then Approve/Reject (their manager). Cards close after one tap.
 - The agent API never returns salary figures. Pulse data has no names and is shown only for 5+ answers.
@@ -84,4 +94,4 @@ The earlier 22 single-purpose routes under `/api/me` are kept unchanged; the off
 7. Close on the swap story: HRMS adapter (`bot/hrms_client.py`) → Razorpay; channel adapter (`bot/channel.py`) → Teams.
 
 ## Shortcuts taken (honest list)
-3-second polling of one `/bot/ui-state` read instead of SSE · jobs triggered by button, not a scheduler · keyword guard/router (no small model) · keyword policy search · fake data and illustrative salary/leave figures · no real login (demo sign-in, any password) · payroll department totals and reimbursements are static sample data · policy upload is a mock.
+3-second polling of one `/bot/ui-state` read instead of SSE · jobs triggered by button, not a scheduler · keyword guard/router (no small model) · keyword policy search · fake data and illustrative salary/leave figures · one shared demo password, no password change or reset · no way to mark someone as exited · new joiners get full-year leave quotas (no pro-rating) · policy upload takes Markdown only.

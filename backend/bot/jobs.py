@@ -10,13 +10,17 @@ def _today_md(d):
     return d[5:] == date.today().isoformat()[5:]
 
 
+def _company():
+    return hrms_client.get("/company")
+
+
 def birthdays():
     with db(BOT_DB) as c:
         out = {r["emp_id"] for r in rows(c, "SELECT emp_id FROM preferences WHERE birthday_opt_out=1")}
     sent = []
     for e in hrms_client.get("/employees"):
         if _today_md(e["dob"]) and e["id"] not in out:
-            channel.post("general", f"🎂 Happy birthday, {e['name']}! Wishing you a wonderful year from everyone at DotKonnekt.", source="Bonding")
+            channel.post("general", f"🎂 Happy birthday, {e['name']}! Wishing you a wonderful year from everyone at {_company()['name']}.", source="Bonding")
             sent.append(e["name"])
     return sent
 
@@ -26,7 +30,7 @@ def anniversaries():
     for e in hrms_client.get("/employees"):
         years = date.today().year - int(e["date_of_joining"][:4])
         if _today_md(e["date_of_joining"]) and years >= 1:
-            channel.post("general", f"🎉 {e['name']} completes {years} year{'s' if years > 1 else ''} at DotKonnekt today! Thank you, {e['first_name']}.", source="Bonding")
+            channel.post("general", f"🎉 {e['name']} completes {years} year{'s' if years > 1 else ''} at {_company()['name']} today! Thank you, {e['first_name']}.", source="Bonding")
             sent.append(e["name"])
     return sent
 
@@ -37,7 +41,7 @@ def checkins():
     for e in hrms_client.get("/employees"):
         if e["date_of_joining"] == target:
             channel.dm(e["id"], card=dict(
-                kind="checkin", title=f"One month at DotKonnekt 🎉",
+                kind="checkin", title=f"One month at {_company()['name']} 🎉",
                 lines=[f"Hi {e['first_name']}, you joined 30 days ago. How has your first month been?", "Your answer goes to HR only."],
                 buttons=[dict(label=f"{n} {f}", action="checkin_submit", value=n) for n, f in ((1, "😞"), (2, "😕"), (3, "😐"), (4, "🙂"), (5, "😄"))],
                 allowed=[e["id"]]), source="HR Agent")
@@ -47,6 +51,7 @@ def checkins():
 
 def leave_nudges():
     today = date.today()
+    after = _company()["nudge_after_days"]
     with db(BOT_DB) as c:
         prefs = rows(c, "SELECT * FROM preferences WHERE wellness_opt_in=1 AND nudges_stopped=0")
     sent = []
@@ -57,7 +62,7 @@ def leave_nudges():
         if not past:
             continue
         gap = (today - date.fromisoformat(max(past))).days
-        if gap >= 90:
+        if gap >= after:
             u = actions.user(p["emp_id"])
             channel.dm(p["emp_id"], card=dict(
                 kind="nudge", title="Time for a break? 🌿",
@@ -94,7 +99,7 @@ def pulse():
         people = rows(c, "SELECT u.emp_id, u.name FROM users u JOIN preferences p ON p.emp_id=u.emp_id WHERE p.wellness_opt_in=1")
     for u in people:
         channel.dm(u["emp_id"], "Weekly pulse: how was your week? It's anonymous. Your manager only sees the team average.", card=dict(
-            kind="pulse", title="How was your week?",
+            kind="pulse", title="How was your week?", note="Saved with your team and the week only. No name.",
             buttons=[dict(label=f"{n} {w}", action="pulse_submit", value=n) for n, w in ((1, "Rough"), (2, "Meh"), (3, "Okay"), (4, "Good"), (5, "Great"))],
             allowed=[u["emp_id"]]), source="Wellness Agent")
     return [f"{len(people)} people opted in to wellness"]
@@ -102,6 +107,20 @@ def pulse():
 
 JOBS = {"birthdays": birthdays, "anniversaries": anniversaries, "checkins": checkins,
         "leave_nudges": leave_nudges, "pulse": pulse, "badminton_poll": badminton_poll}
+
+
+def info():
+    """Name, label and what each job does, for the Console."""
+    co = _company()
+    what = {
+        "birthdays": ("Birthdays", "Posts today's birthdays in #general"),
+        "anniversaries": ("Work anniversaries", "Posts today's work anniversaries in #general"),
+        "checkins": ("30-day check-in", "Asks new joiners how their first month went"),
+        "leave_nudges": ("Leave nudge", f"Nudges people with no day off in {co['nudge_after_days']} days"),
+        "pulse": ("Weekly pulse", "Sends the anonymous 1 to 5 question"),
+        "badminton_poll": ("Group poll", "Opens the weekly poll in #badminton"),
+    }
+    return [dict(name=n, label=what[n][0], what=what[n][1]) for n in JOBS]
 
 
 def run(name):

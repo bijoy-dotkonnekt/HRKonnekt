@@ -1,9 +1,9 @@
 "use client";
-// Directory (employee view) and Employees (HR admin view) are the same list; admin adds joining date and leave today.
+// Directory (everyone) and Employees (HR admin) are the same list; HR also sees joining date and today's attendance.
 
 import { useState } from "react";
 import { Card, Face, Table } from "@/components/ui";
-import { depts, employees, firstName, fmtShort } from "@/lib/data";
+import { depts, firstName, fmtShort } from "@/lib/data";
 import { useStore } from "@/lib/store";
 
 const field = "min-h-11 rounded-xl border border-line bg-ground px-3 text-sm outline-none focus:border-gold";
@@ -12,11 +12,10 @@ export function EmployeeList({ admin = false }: { admin?: boolean }) {
   const s = useStore();
   const [q, setQ] = useState("");
   const [dept, setDept] = useState("");
-  const onLeave = new Set(Object.entries(s.attendanceToday).filter(([, v]) => v === "leave").map(([k]) => k));
-  const list = employees().filter((e) => (!dept || e.dept === dept) && `${e.name} ${e.title}`.toLowerCase().includes(q.toLowerCase()));
+  const list = s.people.filter((e) => (!dept || e.dept === dept) && `${e.name} ${e.title}`.toLowerCase().includes(q.toLowerCase()));
 
   return (
-    <Card title={`${list.length} of ${employees().length} people`}>
+    <Card title={`${list.length} of ${s.people.length} people`}>
       <div className="mb-3 flex flex-wrap gap-2">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or title" aria-label="Search" className={`${field} min-w-0 flex-1`} />
         <select value={dept} onChange={(e) => setDept(e.target.value)} aria-label="Department" className={field}>
@@ -29,20 +28,22 @@ export function EmployeeList({ admin = false }: { admin?: boolean }) {
       <Table
         head={admin ? ["Name", "Title", "Department", "Location", "Manager", "Joined", "Today"] : ["Name", "Title", "Department", "Location", "Manager"]}
         rows={list.map((e) => {
-          const row = [
+          const row: React.ReactNode[] = [
             <span key="n" className="flex items-center gap-2.5 whitespace-nowrap">
               <Face name={e.name} size={28} /> {e.name}
             </span>,
             e.title,
             e.dept,
             e.location,
-            e.managerId ? firstName(e.managerId) : "",
+            firstName(e.managerId),
           ];
-          if (admin)
+          if (admin) {
+            const today = s.attendanceToday[e.id];
             row.push(
-              fmtShort(e.joined) + `, ${e.joined.slice(0, 4)}`,
-              onLeave.has(e.id) ? <span key="l" className="text-gold">On leave</span> : <span key="l" className="text-muted">Working</span>,
+              e.joined ? `${fmtShort(e.joined)}, ${e.joined.slice(0, 4)}` : "",
+              <span key="l" className={today?.status === "leave" ? "text-gold" : "text-muted"}>{today?.label ?? "Not marked yet"}</span>,
             );
+          }
           return row;
         })}
       />

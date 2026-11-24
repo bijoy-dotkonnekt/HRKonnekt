@@ -113,20 +113,18 @@ def resolve_handover(hr_id, handover_id):
 
 def payslip_card(emp_id):
     """Payslip card rendered from the HRMS. Amounts go to the employee's screen only, never back to an agent."""
-    d = hrms_client.get("/payslips", emp_id=emp_id)
-    s, slip = d["structure"], d["payslips"][0]
-    month = date.fromisoformat(slip["month"] + "-01").strftime("%B %Y")
+    slip = hrms_client.get("/payslips", emp_id=emp_id)["payslips"][0]
     channel.dm(emp_id, card=dict(
-        kind="payslip", title=month, state="closed",
-        earnings=[["Basic", s["basic"]], ["House rent allowance", s["hra"]], ["Special allowance", s["special_allowance"]]],
-        deductions=[["Provident fund", s["employee_pf"]], ["Professional tax", s["professional_tax"]], ["Income tax (TDS)", s["tds"]]]
-                   + ([["Loss of pay", slip["lop_amount"]]] if slip["lop_amount"] else []),
-        gross=slip["gross"], net=slip["net_pay"]), source="HR Agent")
-    return month
+        kind="payslip", title=slip["label"], state="closed",
+        earnings=[[x["label"], x["amount"]] for x in slip["earnings"]], deductions=[[x["label"], x["amount"]] for x in slip["deductions"]],
+        gross=slip["gross"], net=slip["net_pay"], source_label="From KonnektHRMS", link="/hrms/employee/payslips",
+        note="Rendered by a card template from KonnektHRMS; never sent to the AI model."), source="HR Agent")
+    return slip["label"]
 
 
 def my_data_card(emp_id):
     channel.dm(emp_id, card=dict(kind="my_data", title="What HRKonnekt keeps about you",
+                                 note="Not stored: PAN, Aadhaar, bank details, or your pulse answers with your name.",
                                  buttons=[dict(label=k, action="pref_toggle", value=k) for k in ("wellness", "nudges", "birthday")],
                                  allowed=[emp_id]), source="Wellness Agent")
 

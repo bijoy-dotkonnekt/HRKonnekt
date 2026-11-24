@@ -1,27 +1,37 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Card, PageHeader, Stat, Status, Table } from "@/components/ui";
-import { LEAVE_TYPES, addDays, firstName, fmtShort, workingDays } from "@/lib/data";
-import { applyLeave, balance, leftOf, useMe, useStore } from "@/lib/store";
+import { addDays, fmtShort } from "@/lib/data";
+import { applyLeave, balance, previewLeave, useMe, useStore, type Preview } from "@/lib/store";
 
 const field = "min-h-11 w-full rounded-xl border border-line bg-ground px-3 text-sm outline-none focus:border-gold";
 
 export default function LeavePage() {
   const s = useStore();
   const ME = useMe();
-  const [code, setCode] = useState("CL");
-  const [start, setStart] = useState(addDays(7));
-  const [end, setEnd] = useState(addDays(8));
+  const f = s.meta.leave_form;
+  const [code, setCode] = useState(f.default_type ?? "");
+  const [start, setStart] = useState(addDays(f.start_offset_days));
+  const [end, setEnd] = useState(addDays(f.end_offset_days));
   const [reason, setReason] = useState("");
   const [sent, setSent] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const days = end >= start ? workingDays(start, end, s.holidays.map((h) => h.date)) : 0;
-  const left = leftOf(s, ME, code);
-  const label = LEAVE_TYPES.find((l) => l.code === code)!.type;
-  const tooMany = days > left;
-  const mgr = s.me.managerId ? firstName(s.me.managerId) : "your manager";
+  // The HRMS counts working days, checks the balance and overlaps; the form just shows what it says.
+  const [preview, setPreview] = useState<{ key: string; value: Preview }>();
+  const key = `${code}|${start}|${end}|${s.balances[ME]?.map((b) => b.left).join()}`;
+  useEffect(() => {
+    let live = true;
+    previewLeave(code, start, end)
+      .then((value) => live && setPreview({ key, value }))
+      .catch((x) => live && setPreview({ key, value: { ok: false, days: 0, left: null, message: (x as Error).message } }));
+    return () => {
+      live = false;
+    };
+  }, [code, start, end, key]);
+  const p = preview?.key === key ? preview.value : undefined;
+  const mgr = s.me.managerId ? (s.people.find((e) => e.id === s.me.managerId)?.name.split(" ")[0] ?? "your manager") : "your manager";
 
   return (
     <>
@@ -42,8 +52,8 @@ export default function LeavePage() {
                 setBusy(true);
                 setErr("");
                 try {
-                  const r = await applyLeave(ME, code, start, end, reason);
-                  setSent(`Request #${r.id} sent to ${mgr}. They'll see it in chat too.`);
+                  const r = await applyLeave(code, start, end, reason);
+                  setSent(`Request #${r.id} sent to ${r.approver_name?.split(" ")[0] ?? mgr}. They'll see it in chat too.`);
                   setReason("");
                 } catch (x) {
                   setErr((x as Error).message);
@@ -59,8 +69,8 @@ export default function LeavePage() {
               <label className="grid gap-1 text-sm">
                 Type
                 <select value={code} onChange={(e) => setCode(e.target.value)} className={field}>
-                  {LEAVE_TYPES.map((l) => (
-                    <option key={l.code} value={l.code}>{l.type}</option>
+                  {s.meta.leave_types.map((l) => (
+                    <option key={l.code} value={l.code}>{l.label}</option>
                   ))}
                 </select>
               </label>
@@ -78,13 +88,11 @@ export default function LeavePage() {
                 Reason
                 <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Optional" className={field} />
               </label>
-              {!sent && <p className={`text-sm ${tooMany ? "text-red" : "text-muted"}`}>
-                {days} working {days === 1 ? "day" : "days"}. {tooMany ? `You only have ${left} ${label.toLowerCase()} days left.` : `${left - days} left after this.`}
-              </p>}
+              {!sent && <p className={`text-sm ${p && !p.ok ? "text-red" : "text-muted"}`}>{p ? p.message : "Checking with KonnektHRMS"}</p>}
               {err && <p role="alert" className="text-sm text-red">{err}</p>}
               {sent && <p className="text-sm text-green">{sent}</p>}
-              <Button type="submit" disabled={days === 0 || tooMany || busy || !!sent}>
-                {busy ? "Sending" : `Send to ${mgr}`}
+              <Button type="submit" disabled={!p?.ok || busy || !!sent}>
+                {busy ? "Sending" : `Send to ${p?.approver_name?.split(" ")[0] ?? mgr}`}
               </Button>
             </form>
           </Card>
@@ -100,7 +108,7 @@ export default function LeavePage() {
                   `${fmtShort(r.start)} to ${fmtShort(r.end)}`,
                   r.days,
                   r.via === "chat" ? "Chat" : "KonnektHRMS",
-                  <Status key="s" status={r.status === "cancelled" ? "rejected" : r.status} waitingOn={mgr} />,
+                  <Status key="s" status={r.status} waitingOn={r.approverName?.split(" ")[0]} />,
                 ])}
             />
           </Card>

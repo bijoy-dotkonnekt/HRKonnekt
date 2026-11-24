@@ -1,130 +1,167 @@
 "use client";
-// Live state from the FastAPI backend. One poll of /bot/ui-state every 3 seconds feeds every page and the chat bubble.
-// Mutations are POSTs to /hrms and /bot, followed by an immediate refetch.
+// Live state from the FastAPI backend. After sign-in, one poll of /bot/ui-state every 3 seconds feeds every page and the
+// chat bubble, and /bot/meta (loaded once) supplies every label, list and rule the UI shows. Nothing is hardcoded here.
 // ponytail: 3s polling instead of SSE; switch to EventSource if the demo needs instant updates.
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { setPeople, leaveLabel, type Employee, type Persona, type Role } from "./data";
+import { setPeople, type Employee, type Persona } from "./data";
 
 export const API = process.env.NEXT_PUBLIC_API ?? "http://localhost:8000";
 
-export type Agent = "hr" | "bonding" | "wellness" | "guard";
-type Facts = [string, string][];
-export type Card =
-  | { kind: "leaveConfirm"; facts: Facts }
-  | { kind: "leaveApprove"; title: string; facts: Facts }
-  | { kind: "payslip"; title: string; earnings: [string, number][]; deductions: [string, number][]; gross: number; net: number }
-  | { kind: "poll"; title: string; options: { label: string; votes: number }[] }
-  | { kind: "pulse" }
-  | { kind: "checkin" }
-  | { kind: "nudge"; title: string; lines: string[] }
-  | { kind: "handoverNotice"; title: string; topic: string; from: string }
-  | { kind: "myData" }
-  | { kind: "info"; title: string; lines: string[]; facts: Facts };
-
-export type Msg = { id: string; ch: string; from: string; agent?: Agent; text: string; source?: string; card?: Card; cardId?: number; canAct?: boolean; done?: string; at: number };
-export type LeaveRequest = { id: string; empId: string; code: string; type: string; start: string; end: string; days: number; reason: string; status: "pending" | "approved" | "rejected" | "cancelled"; via: "chat" | "hrms"; approverId?: string; decidedBy?: string };
-export type Handover = { id: string; empId: string; topic: string; category: string; sensitive: boolean; at: number; status: "open" | "resolved"; assignedName?: string };
-export type Balance = { code: string; type: string; entitled: number; taken: number; pending: number; left: number };
-export type Pulse = { team: string; week: string; avg: number | null; n: number };
-export type Prefs = { wellness: boolean; nudges: boolean; birthday: boolean; reminders: string[] };
-
-export type State = {
-  me: Persona;
-  requests: LeaveRequest[];
-  messages: Msg[];
-  typing: string[]; // channels where the bot is working on a reply
-  conversations: { id: string; type: string; name: string }[];
-  handovers: Handover[];
-  unanswered: { q: string; count: number; team: string }[];
-  pulse: Pulse[];
-  groups: Record<string, string[]>;
-  prefs: Prefs;
-  holidays: { date: string; name: string }[];
-  announcements: { title: string; body: string; at: string }[];
-  attendanceToday: Record<string, string>; // empId -> present | wfh | leave | ...
-  balances: Record<string, Balance[]>;
-  audit: { at: number; who: string; what: string }[];
-  usage: Record<Agent, number>;
-  config: { force_offline: boolean; agents: Record<string, boolean> };
+export type Agent = string; // ids come from meta.agents
+export type CardButton = { label: string; action: string; value?: string | number; style?: string };
+export type Card = {
+  id: number;
+  kind: string;
+  title?: string;
+  lines?: string[];
+  facts?: [string, string][];
+  buttons?: CardButton[];
+  options?: { label: string; votes: number }[];
+  earnings?: [string, number][];
+  deductions?: [string, number][];
+  gross?: number;
+  net?: number;
+  note?: string;
+  source_label?: string;
+  link?: string;
+};
+export type Msg = { id: string; ch: string; from: string; agent?: Agent | null; text: string; source?: string; card?: Card; cardId?: number; canAct?: boolean; done?: string; at: number };
+export type LeaveRequest = {
+  id: string; empId: string; employeeName: string; code: string; type: string; start: string; end: string; days: number; reason: string;
+  status: "pending" | "approved" | "rejected" | "cancelled"; via: "chat" | "hrms"; approverId?: string | null; approverName?: string | null;
+};
+export type Handover = { id: string; empId: string; employeeName: string; topic: string; category: string; sensitive: boolean; at: number; status: "open" | "resolved"; assignedName?: string | null };
+export type Balance = { code: string; type: string; letter: string; entitled: number; taken: number; pending: number; left: number };
+export type PulseRow = { week: string; label: string; avg: number | null; answers: number; shown: boolean };
+export type TeamPerson = { id: string; name: string; title: string; location: string; today: { label: string; tone: string; on_leave: boolean }; leave_left: string };
+export type Meta = {
+  company: { name: string; email_domain: string; wfh_per_week: number; nudge_after_days: number; pulse_min_answers: number };
+  leave_types: { code: string; label: string; name: string; letter: string; note: string }[];
+  leave_form: { start_offset_days: number; end_offset_days: number; default_type: string | null };
+  agents: { id: string; name: string; glyph: string }[];
+  jobs: { name: string; label: string; what: string }[];
+  suggestions: string[];
+  nav: { href: string; label: string; badge?: string }[];
+  home: string;
+  pulse: { min_answers: number; scale_max: number };
 };
 
-const GUARD = new Set(["posh", "grievance", "termination", "pay_dispute", "crisis"]);
+export type State = {
+  meta: Meta;
+  me: Persona;
+  people: Employee[];
+  requests: LeaveRequest[];
+  balances: Record<string, Balance[]>;
+  messages: Msg[];
+  typing: string[]; // channels where the bot is working on a reply
+  conversations: { id: string; type: string; name: string; sub: string }[];
+  groups: Record<string, string[]>;
+  prefs: { wellness: boolean; nudges: boolean; birthday: boolean; toggles: { key: string; label: string; on: boolean }[]; reminders: string[] };
+  holidays: { date: string; name: string }[];
+  announcements: { title: string; body: string; at: string }[];
+  team: { people: TeamPerson[]; on_leave_today: number; approved_ahead: number; legend: string } | null;
+  pulse: { team: PulseRow[]; company: PulseRow[] };
+  handovers: Handover[];
+  unanswered: { q: string; count: number; team: string }[];
+  attendanceToday: Record<string, { status: string; label: string }>;
+  audit: { at: number; who: string; what: string }[];
+  usage: { agent: string; name: string; count: number; what: string }[];
+  config: { force_offline: boolean; agents: Record<string, boolean> } | null;
+  badges: Record<string, number>;
+};
+
 export const dm = (personaId: string) => `dm-${personaId}`;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Raw = any;
 
+// ---------- session ----------
+// Kept in sessionStorage, so each browser tab can be signed in as a different person.
+const SESSION = "hrk-session";
+type Session = { token: string; id: string; home: string };
+const sessionListeners = new Set<() => void>();
+let sessionCache: { raw: string | null; value: Session | null } = { raw: null, value: null };
+const readSession = (): Session | null => {
+  let raw: string | null = null;
+  try {
+    raw = sessionStorage.getItem(SESSION);
+  } catch {}
+  if (raw !== sessionCache.raw) sessionCache = { raw, value: raw ? (JSON.parse(raw) as Session) : null };
+  return sessionCache.value;
+};
+
 async function call(method: string, path: string, body?: unknown) {
-  const r = await fetch(API + path, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    cache: "no-store",
-  });
+  const s = readSession();
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (s) headers.Authorization = `Bearer ${s.token}`;
+  const r = await fetch(API + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, cache: "no-store" });
   const data = await r.json().catch(() => ({}));
+  if (r.status === 401 && s) signOut();
   if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : r.statusText);
   return data;
 }
 export const get = (path: string) => call("GET", path);
-const post = (path: string, body?: unknown) => call("POST", path, body ?? {});
+export const post = (path: string, body?: unknown) => call("POST", path, body ?? {});
 
-/** One-off read for page data too big to poll (payslips, attendance, policy text). Refetches when `path` changes. */
-export function useFetch<T = Raw>(path: string | null): T | undefined {
-  const [data, setData] = useState<{ path: string; value: T }>();
+export async function signIn(email: string, password: string): Promise<string> {
+  const r = await call("POST", "/auth/login", { email, password });
+  try {
+    sessionStorage.setItem(SESSION, JSON.stringify({ token: r.token, id: r.me.id, home: r.me.home }));
+  } catch {}
+  state = null;
+  meta = null;
+  sessionListeners.forEach((l) => l());
+  refresh();
+  return r.me.home as string;
+}
+export function signOut() {
+  const s = readSession();
+  if (s) fetch(API + "/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${s.token}` } }).catch(() => {});
+  try {
+    sessionStorage.removeItem(SESSION);
+  } catch {}
+  state = null;
+  meta = null;
+  sessionListeners.forEach((l) => l());
+  emit();
+}
+export const useSession = () =>
+  useSyncExternalStore(
+    (l) => (sessionListeners.add(l), () => void sessionListeners.delete(l)),
+    readSession,
+    () => null,
+  );
+/** The signed-in person's emp id (pages render only once signed in). */
+export const useMe = () => useSession()?.id ?? "";
+
+/** One-off read for page data too big to poll (payslips, attendance, policy text). Refetches when `path` or `key` changes. */
+export function useFetch<T = Raw>(path: string | null, key = 0): T | undefined {
+  const [data, setData] = useState<{ id: string; value: T }>();
+  const id = `${path}#${key}`;
   useEffect(() => {
     if (!path) return;
     let live = true;
-    get(path).then((value) => live && setData({ path, value })).catch(() => {});
+    get(path).then((value) => live && setData({ id, value })).catch(() => {});
     return () => {
       live = false;
     };
-  }, [path]);
-  return data?.path === path ? data.value : undefined;
+  }, [path, id]);
+  return data?.id === id ? data.value : undefined;
 }
 
-// ---------- mapping backend rows to the revamp's shapes ----------
-const agentOf = (source?: string | null): Agent | undefined => {
-  const s = (source ?? "").toLowerCase();
-  return s.startsWith("guard") ? "guard" : s.startsWith("bonding") ? "bonding" : s.startsWith("wellness") ? "wellness" : s ? "hr" : undefined;
-};
-
-function toCard(c: Raw): Card | undefined {
-  if (!c) return undefined;
-  const facts = (c.facts ?? []) as Facts;
-  switch (c.kind) {
-    case "leave_confirm":
-      return { kind: "leaveConfirm", facts };
-    case "leave_approval":
-      return { kind: "leaveApprove", title: c.title, facts };
-    case "payslip":
-      return { kind: "payslip", title: c.title, earnings: c.earnings, deductions: c.deductions, gross: c.gross, net: c.net };
-    case "poll":
-      return { kind: "poll", title: c.title, options: c.options ?? [] };
-    case "pulse":
-      return { kind: "pulse" };
-    case "checkin":
-      return { kind: "checkin" };
-    case "nudge":
-      return { kind: "nudge", title: c.title, lines: c.lines ?? [] };
-    case "handover":
-      return { kind: "handoverNotice", title: c.title, topic: c.lines?.[0] ?? "", from: facts.find((f) => f[0] === "From")?.[1] ?? "" };
-    case "my_data":
-      return { kind: "myData" };
-    default:
-      return { kind: "info", title: c.title ?? "", lines: c.lines ?? [], facts };
-  }
-}
-
+// ---------- backend rows to UI shapes (renames only; every rule lives in the backend) ----------
 function toMsg(m: Raw): Msg {
   const c = m.card;
   return {
     id: String(m.id),
     ch: m.conversation_id,
     from: m.sender_emp_id ? String(m.sender_emp_id) : "bot",
-    agent: m.sender_emp_id ? undefined : agentOf(m.source) ?? "hr",
+    agent: m.agent,
     text: m.text ?? "",
-    card: toCard(c),
+    source: m.source ?? undefined,
+    card: c ?? undefined,
     cardId: c?.id,
     canAct: c?.can_act,
     done: c?.state === "closed" ? c.result : undefined,
@@ -132,60 +169,36 @@ function toMsg(m: Raw): Msg {
   };
 }
 
-const roleOf = (r: Raw, e?: Employee): Role =>
-  r.role === "hr_admin" ? "hradmin" : r.role === "manager" ? "manager" : e && Date.now() - Date.parse(e.joined) < 45 * 86_400_000 ? "newjoiner" : "employee";
-
-function toState(d: Raw): State {
-  const emps: Employee[] = d.employees.map((e: Raw) => ({
-    id: String(e.id), name: e.name, title: e.designation, dept: e.department, team: e.department_code, location: e.location,
-    managerId: e.manager_id ? String(e.manager_id) : undefined, joined: e.date_of_joining, birthday: e.dob.slice(5), status: e.status,
-  }));
-  const byId = new Map(emps.map((e) => [e.id, e]));
-  const demo: Persona[] = d.users
-    .filter((u: Raw) => u.demo_order < 99 && byId.has(String(u.emp_id)))
-    .map((u: Raw) => ({ ...byId.get(String(u.emp_id))!, role: roleOf(u, byId.get(String(u.emp_id))) }));
-  setPeople(emps, demo);
-  const meEmp = byId.get(String(d.me.emp_id))!;
-
-  const balances: Record<string, Balance[]> = {};
-  for (const [id, list] of Object.entries(d.balances as Record<string, Raw[]>))
-    balances[id] = list
-      .filter((b) => ["CL", "SL", "EL"].includes(b.leave_type))
-      .map((b) => ({ code: b.leave_type, type: leaveLabel(b.leave_type), entitled: b.opening + b.accrued, taken: b.used, pending: b.pending, left: b.available }));
-
-  const reminders = (d.reminders as Raw[]).filter((r) => r.active).map((r) => `${r.kind === "walk" ? "Take a short walk" : "Drink water"}, every ${r.every_minutes} minutes`);
+function toState(d: Raw, m: Meta): State {
+  setPeople(d.people);
   return {
-    me: { ...meEmp, role: roleOf(d.me, meEmp) },
-    requests: (d.requests as Raw[])
-      .map((r) => ({
-        id: String(r.id), empId: String(r.emp_id), code: r.leave_type, type: leaveLabel(r.leave_type), start: r.start_date, end: r.end_date,
-        days: r.days, reason: r.reason ?? "", status: r.status, via: r.source === "chat" ? "chat" : "hrms",
-        approverId: r.approver_id ? String(r.approver_id) : undefined, decidedBy: r.decided_at && r.approver_id ? String(r.approver_id) : undefined,
-      }) as LeaveRequest)
-      .sort((a, b) => Number(b.id) - Number(a.id)),
+    meta: m,
+    me: d.me,
+    people: d.people,
+    requests: d.requests,
+    balances: d.balances,
     messages: (d.messages as Raw[]).map(toMsg),
     typing: [...typing],
     conversations: d.conversations,
-    handovers: (d.handovers as Raw[]).map((h) => ({
-      id: String(h.id), empId: String(h.emp_id), topic: h.summary, category: h.category, sensitive: GUARD.has(h.category),
-      at: Date.parse(h.created_at), status: h.status === "open" ? "open" : "resolved", assignedName: h.assigned_name ?? undefined,
-    })),
-    unanswered: (d.unanswered as Raw[]).filter((u) => u.status === "open").map((u) => ({ q: u.question, count: u.times_asked, team: u.team })),
+    groups: d.groups,
+    prefs: d.prefs,
+    holidays: d.holidays,
+    announcements: d.announcements,
+    team: d.team,
     pulse: d.pulse,
-    groups: Object.fromEntries(Object.entries(d.groups as Record<string, number[]>).map(([k, v]) => [k, v.map(String)])),
-    prefs: { wellness: !!d.prefs?.wellness_opt_in, nudges: !d.prefs?.nudges_stopped, birthday: !d.prefs?.birthday_opt_out, reminders },
-    holidays: (d.holidays as Raw[]).filter((h) => h.location_id == null).map((h) => ({ date: h.date, name: h.name })),
-    announcements: (d.announcements as Raw[]).map((a) => ({ title: a.title, body: a.body, at: a.posted_at })),
-    attendanceToday: Object.fromEntries((d.attendance_today as Raw[]).map((a) => [String(a.emp_id), a.status])),
-    balances,
-    audit: (d.audit as Raw[]).map((a) => ({ at: Date.parse(a.created_at), who: a.actor, what: `${a.action} ${a.target ?? ""}`.trim() })),
+    handovers: (d.handovers as Raw[]).map((h) => ({ ...h, at: Date.parse(h.at) })),
+    unanswered: d.unanswered,
+    attendanceToday: d.attendance_today,
+    audit: (d.audit as Raw[]).map((a) => ({ ...a, at: Date.parse(a.at) })),
     usage: d.usage,
     config: d.config,
+    badges: d.badges,
   };
 }
 
 // ---------- store plumbing ----------
 let state: State | null = null;
+let meta: Meta | null = null;
 let error = "";
 let typing = new Set<string>();
 const listeners = new Set<() => void>();
@@ -195,15 +208,16 @@ let inflight = false;
 let again = false;
 
 export async function refresh(): Promise<void> {
-  const id = readSession();
-  if (!id) return;
+  if (!readSession()) return;
   if (inflight) {
     again = true; // a mutation landed mid-poll: poll once more when this one finishes
     return;
   }
   inflight = true;
   try {
-    state = toState(await get(`/bot/ui-state?emp_id=${id}`));
+    meta = meta ?? ((await get("/bot/meta")) as Meta);
+    const d = await get("/bot/ui-state");
+    if (readSession()) state = toState(d, meta);
     error = "";
   } catch (e) {
     error = `Can't reach the HRKonnekt backend at ${API} (${(e as Error).message}).`;
@@ -237,31 +251,33 @@ const empty = null as unknown as State;
 export const useStore = () => useSyncExternalStore(subscribe, () => state ?? empty, () => empty);
 export const useStoreError = () => useSyncExternalStore(subscribe, () => error, () => "");
 
-// ---------- derived ----------
-export const balance = (s: State, empId: string): Balance[] =>
-  s.balances[empId] ?? [{ code: "CL", type: "Casual", entitled: 0, taken: 0, pending: 0, left: 0 }];
-export const leftOf = (s: State, empId: string, code: string) => balance(s, empId).find((b) => b.code === code)?.left ?? 0;
+// ---------- lookups ----------
+export const balance = (s: State, empId: string): Balance[] => s.balances[empId] ?? [];
+export const leftOf = (s: State, empId: string, code: string) => balance(s, empId).find((b) => b.code === code)?.left;
+export const agentInfo = (s: State | null, id?: string | null) => s?.meta.agents.find((a) => a.id === id);
 
 // ---------- leave (HRMS web; chat uses the cards) ----------
-export async function applyLeave(empId: string, code: string, start: string, end: string, reason: string) {
+export type Preview = { ok: boolean; days: number; left: number | null; left_after?: number | null; approver_name?: string; message: string };
+export const previewLeave = (code: string, start: string, end: string) =>
+  post("/hrms/leave/preview", { leave_type: code, start_date: start, end_date: end }) as Promise<Preview>;
+
+export async function applyLeave(code: string, start: string, end: string, reason: string) {
   try {
-    return await post("/bot/leave/apply", { emp_id: Number(empId), leave_type: code, start_date: start, end_date: end, reason });
+    return await post("/bot/leave/apply", { leave_type: code, start_date: start, end_date: end, reason });
   } finally {
     refresh();
   }
 }
 
-export async function decideLeave(requestId: string, decision: "approved" | "rejected", by: string) {
+export async function decideLeave(requestId: string, decision: "approved" | "rejected") {
   try {
-    await post(`/bot/leave/${requestId}/decide`, { approver_id: Number(by), decision: decision === "approved" ? "approve" : "reject" });
+    await post(`/bot/leave/${requestId}/decide`, { decision: decision === "approved" ? "approve" : "reject" });
   } finally {
     refresh();
   }
 }
 
-export async function resolveHandover(id: string, by: string) {
-  await post(`/bot/admin/handovers/${id}/resolve`, { hr_id: Number(by) }).finally(refresh);
-}
+export const resolveHandover = (id: string) => post(`/bot/admin/handovers/${id}/resolve`).finally(refresh);
 
 // ---------- chat ----------
 export async function sendMessage(pid: string, ch: string, text: string) {
@@ -273,7 +289,7 @@ export async function sendMessage(pid: string, ch: string, text: string) {
     emit();
   }
   try {
-    await post("/bot/messages", { emp_id: Number(pid), conversation_id: ch, text });
+    await post("/bot/messages", { conversation_id: ch, text });
   } finally {
     typing.delete(ch);
     typing = new Set(typing);
@@ -281,22 +297,10 @@ export async function sendMessage(pid: string, ch: string, text: string) {
   }
 }
 
-// Card buttons map to the backend's no-AI button handlers (/bot/actions).
-const CHECKIN: Record<string, number> = { "Settling in well": 5, "Okay so far": 3, "Finding it hard": 2 };
-export async function tapCard(m: Msg, action: string, pid: string) {
-  const c = m.card!;
-  let a = action;
-  let value: string | number | undefined;
-  if (c.kind === "leaveConfirm") a = action === "yes" ? "leave_confirm" : "leave_cancel";
-  else if (c.kind === "leaveApprove") a = action === "approved" ? "leave_approve" : "leave_reject";
-  else if (c.kind === "poll") [a, value] = ["poll_vote", c.options[Number(action)].label];
-  else if (c.kind === "pulse") [a, value] = ["pulse_submit", Number(action)];
-  else if (c.kind === "checkin") [a, value] = ["checkin_submit", CHECKIN[action] ?? 3];
-  else if (c.kind === "nudge") a = { find: "nudge_find_day", later: "nudge_not_now", stop: "nudge_stop" }[action] ?? action;
-  else if (c.kind === "handoverNotice") a = "handover_pickup";
-  else if (c.kind === "myData") [a, value] = ["pref_toggle", action];
+// Card buttons carry their own action and value from the backend; the UI just sends them back.
+export async function tapCard(m: Msg, action: string, value?: string | number) {
   try {
-    await post("/bot/actions", { emp_id: Number(pid), card_id: m.cardId, action: a, value });
+    await post("/bot/actions", { card_id: m.cardId, action, value });
   } catch (e) {
     console.warn("card action refused:", (e as Error).message);
   } finally {
@@ -304,17 +308,8 @@ export async function tapCard(m: Msg, action: string, pid: string) {
   }
 }
 
-// ---------- Console ----------
-export const JOBS = [
-  { name: "birthdays", label: "Birthdays", what: "Posts today's birthdays in #general" },
-  { name: "anniversaries", label: "Work anniversaries", what: "Posts today's work anniversaries in #general" },
-  { name: "checkins", label: "30-day check-in", what: "Asks new joiners how it's going" },
-  { name: "leave_nudges", label: "Leave nudge", what: "Nudges people with no day off in 90 days" },
-  { name: "pulse", label: "Weekly pulse", what: "Sends the anonymous 1 to 5 question" },
-  { name: "badminton_poll", label: "Group poll", what: "Opens the weekly poll in #badminton" },
-] as const;
-
-export async function runJob(name: (typeof JOBS)[number]["name"]): Promise<string[]> {
+// ---------- Console and HR ----------
+export async function runJob(name: string): Promise<string[]> {
   try {
     return (await post(`/bot/jobs/${name}/run`)).sent;
   } finally {
@@ -324,41 +319,8 @@ export async function runJob(name: (typeof JOBS)[number]["name"]): Promise<strin
 
 export const addHoliday = (day: string, name: string) => post("/hrms/holidays", { day, name }).finally(refresh);
 export const removeHoliday = (day: string) => call("DELETE", `/hrms/holidays/${day}`).finally(refresh);
-export const resetDemo = () => post("/bot/reset").finally(refresh);
+export const resetDemo = () => post("/bot/reset").finally(() => ((meta = null), refresh()));
 export const setOffline = (on: boolean) => post("/bot/admin/offline", { force_offline: on }).finally(refresh);
-
-// ---------- demo sign-in ----------
-// Kept in sessionStorage, so each browser tab can be signed in as a different person.
-const SESSION = "hrk-user";
-const sessionListeners = new Set<() => void>();
-const readSession = () => {
-  try {
-    return sessionStorage.getItem(SESSION);
-  } catch {
-    return null;
-  }
-};
-export function signIn(id: string) {
-  try {
-    sessionStorage.setItem(SESSION, id);
-  } catch {}
-  state = null;
-  sessionListeners.forEach((l) => l());
-  refresh();
-}
-export function signOut() {
-  try {
-    sessionStorage.removeItem(SESSION);
-  } catch {}
-  state = null;
-  sessionListeners.forEach((l) => l());
-  emit();
-}
-export const useSession = () =>
-  useSyncExternalStore(
-    (l) => (sessionListeners.add(l), () => void sessionListeners.delete(l)),
-    readSession,
-    () => null,
-  );
-/** The signed-in person's emp id (pages render only once signed in). */
-export const useMe = () => useSession() ?? "";
+export const lockPayroll = (month: string) => post(`/hrms/payroll/${month}/lock`);
+export const uploadPolicy = (filename: string, content: string) => post("/bot/admin/policies", { filename, content });
+export const addEmployee = (body: Record<string, unknown>) => post("/bot/admin/employees", body).finally(refresh);

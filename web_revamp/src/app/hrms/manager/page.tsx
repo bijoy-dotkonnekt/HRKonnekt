@@ -2,7 +2,7 @@
 
 import { Card, Decide, Face, PageHeader, Status, Table } from "@/components/ui";
 import { decideLeave, leftOf, useMe, useStore } from "@/lib/store";
-import { empById, fmtShort } from "@/lib/data";
+import { fmtShort } from "@/lib/data";
 
 export default function ApprovalsPage() {
   const s = useStore();
@@ -21,8 +21,7 @@ export default function ApprovalsPage() {
           ) : (
             <ul className="divide-y divide-line">
               {pending.map((r) => {
-                const e = empById(r.empId);
-                const name = e?.name ?? `#${r.empId}`;
+                const name = r.employeeName;
                 const left = leftOf(s, r.empId, r.code);
                 return (
                   <li key={r.id} className="rise flex flex-wrap items-center gap-4 py-3">
@@ -33,10 +32,10 @@ export default function ApprovalsPage() {
                         {r.type}, {fmtShort(r.start)} to {fmtShort(r.end)}, {r.days} {r.days === 1 ? "day" : "days"}.{r.reason && <> &ldquo;{r.reason}&rdquo;</>}
                       </div>
                       <div className="text-xs text-muted">
-                        {left} {r.type.toLowerCase()} left after this. Asked via {r.via === "chat" ? "chat" : "KonnektHRMS"}.
+                        {left ?? "?"} {r.type.toLowerCase()} left after this. Asked via {r.via === "chat" ? "chat" : "KonnektHRMS"}.
                       </div>
                     </div>
-                    <Decide status="pending" onDecide={(d) => decideLeave(r.id, d, ME)} waitingOn={name} />
+                    <Decide status="pending" onDecide={(d) => decideLeave(r.id, d)} waitingOn={name} />
                   </li>
                 );
               })}
@@ -47,7 +46,7 @@ export default function ApprovalsPage() {
         <Card title="Decided">
           <Table
             head={["Who", "Type", "Dates", "Days", "Result"]}
-            rows={decided.slice(0, 15).map((r) => [empById(r.empId)?.name ?? r.empId, r.type, `${fmtShort(r.start)} to ${fmtShort(r.end)}`, r.days, <Status key="s" status={r.status as "approved" | "rejected"} />])}
+            rows={decided.slice(0, 15).map((r) => [r.employeeName, r.type, `${fmtShort(r.start)} to ${fmtShort(r.end)}`, r.days, <Status key="s" status={r.status} />])}
           />
         </Card>
       </div>
