@@ -1,0 +1,98 @@
+.venv/
+backend/data/
+.env
+__pycache__/
+node_modules/
+.next/
+
+
+
+
+# ==============================================================================
+# Node / Next.js Frontend
+# ==============================================================================
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js build and production output
+.next/
+out/
+build/
+dist/
+
+# Logs and debug info
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Next.js tooling telemetry and cache
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# ==============================================================================
+# Python / FastAPI Backend
+# ==============================================================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Package management caches
+.pip-wheel-metadata/
+.poetry/
+.pdm.toml
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local databases (SQLite)
+*.sqlite3
+*.db
+
+# ==============================================================================
+# Environment Variables & Secrets (CRITICAL)
+# ==============================================================================
+# Reject local application secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+
+# ==============================================================================
+# OS & IDE Specific
+# ==============================================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# IDEs / Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
