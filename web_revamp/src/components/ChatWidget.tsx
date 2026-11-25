@@ -27,8 +27,9 @@ export function ChatWidget({ pid }: { pid: string }) {
   const active = channels.find((c) => c.id === ch) ?? channels[0];
   const msgs = s.messages.filter((m) => m.ch === active.id);
   const typing = s.typing.includes(active.id);
-  const count = (c: string) => s.messages.filter((m) => m.ch === c).length;
-  const unread = (c: string) => (open && c === active.id ? 0 : Math.max(0, count(c) - (seen[c] ?? 0)));
+  const counts: Record<string, number> = {};
+  for (const m of s.messages) counts[m.ch] = (counts[m.ch] ?? 0) + 1;
+  const unread = (c: string) => (open && c === active.id ? 0 : Math.max(0, (counts[c] ?? 0) - (seen[c] ?? 0)));
   const totalUnread = channels.reduce((n, c) => n + unread(c.id), 0);
 
   useEffect(() => {

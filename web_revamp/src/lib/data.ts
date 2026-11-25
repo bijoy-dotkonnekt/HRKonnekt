@@ -36,10 +36,12 @@ export const inr = (n: number) => n.toLocaleString("en-IN", { style: "currency",
 
 // ---------- people (cache filled by store.ts from /bot/ui-state) ----------
 let people: Employee[] = [];
+let byId = new Map<string, Employee>();
 export const setPeople = (e: Employee[]) => {
   people = e;
+  byId = new Map(e.map((p) => [p.id, p]));
 };
 export const employees = () => people;
-export const empById = (id?: string | null) => people.find((e) => e.id === id);
+export const empById = (id?: string | null) => (id ? byId.get(id) : undefined);
 export const firstName = (id?: string | null) => empById(id)?.name.split(" ")[0] ?? "";
 export const depts = () => [...new Set(people.map((e) => e.dept))].sort();

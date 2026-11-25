@@ -2,6 +2,8 @@
 // Builds React elements (text is escaped by React); no HTML from the agent is ever injected.
 // ponytail: hand-rolled for these cases; swap for a Markdown library if agents start sending links or nested lists.
 
+import { memo } from "react";
+
 function inline(text: string, key = 0): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   const re = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s][^*]*\*|_[^_\s][^_]*_|`[^`]+`)/g;
@@ -22,7 +24,8 @@ function inline(text: string, key = 0): React.ReactNode[] {
 const cells = (row: string) => row.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
 const isRule = (row: string) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(row);
 
-export function Markdown({ text }: { text: string }) {
+// Memoised on the text: a new message re-renders the whole chat, but old messages don't need parsing again.
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
   const lines = text.replace(/\r/g, "").split("\n");
   const blocks: React.ReactNode[] = [];
   let i = 0;
@@ -90,4 +93,4 @@ export function Markdown({ text }: { text: string }) {
     );
   }
   return <div className="space-y-2 text-sm leading-relaxed">{blocks}</div>;
-}
+});

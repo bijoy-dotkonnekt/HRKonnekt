@@ -59,7 +59,8 @@ function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        <nav className="flex gap-1 overflow-x-auto md:flex-col" aria-label="Sections">
+        {/* -m-1 p-1: room for the focus ring, which overflow-x-auto would otherwise clip. */}
+        <nav className="-m-1 flex gap-1 overflow-x-auto p-1 md:flex-col" aria-label="Sections">
           {s.meta.nav.map((n) => {
             const c = n.badge ? (s.badges[n.badge] ?? 0) : 0;
             const on = path === n.href;

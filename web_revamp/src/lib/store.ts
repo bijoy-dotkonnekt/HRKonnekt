@@ -96,6 +96,7 @@ async function call(method: string, path: string, body?: unknown) {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (s) headers.Authorization = `Bearer ${s.token}`;
+  headers["ngrok-skip-browser-warning"] = "1"; // skips ngrok free-tier interstitial when NEXT_PUBLIC_API is a tunnel
   const r = await fetch(API + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, cache: "no-store" });
   const data = await r.json().catch(() => ({}));
   if (r.status === 401 && s) signOut();
@@ -112,18 +113,20 @@ export async function signIn(email: string, password: string): Promise<string> {
   } catch {}
   state = null;
   meta = null;
+  lastSig = "";
   sessionListeners.forEach((l) => l());
   refresh();
   return r.me.home as string;
 }
 export function signOut() {
   const s = readSession();
-  if (s) fetch(API + "/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${s.token}` } }).catch(() => {});
+  if (s) fetch(API + "/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${s.token}`, "ngrok-skip-browser-warning": "1" } }).catch(() => {});
   try {
     sessionStorage.removeItem(SESSION);
   } catch {}
   state = null;
   meta = null;
+  lastSig = "";
   sessionListeners.forEach((l) => l());
   emit();
 }
@@ -206,6 +209,9 @@ const emit = () => listeners.forEach((l) => l());
 let timer: ReturnType<typeof setInterval> | undefined;
 let inflight = false;
 let again = false;
+// The last poll's response plus the typing channels. Most polls return exactly the same data, and rebuilding the
+// state for those would re-render every page and chat message every 3 seconds for nothing.
+let lastSig = "";
 
 export async function refresh(): Promise<void> {
   if (!readSession()) return;
@@ -214,16 +220,21 @@ export async function refresh(): Promise<void> {
     return;
   }
   inflight = true;
+  const before = { state, error };
   try {
     meta = meta ?? ((await get("/bot/meta")) as Meta);
     const d = await get("/bot/ui-state");
-    if (readSession()) state = toState(d, meta);
+    const sig = `${JSON.stringify(d)}|${[...typing].join()}`;
+    if (readSession() && (sig !== lastSig || !state)) {
+      state = toState(d, meta);
+      lastSig = sig;
+    }
     error = "";
   } catch (e) {
     error = `Can't reach the HRKonnekt backend at ${API} (${(e as Error).message}).`;
   } finally {
     inflight = false;
-    emit();
+    if (state !== before.state || error !== before.error) emit();
   }
   if (again) {
     again = false;
@@ -231,17 +242,23 @@ export async function refresh(): Promise<void> {
   }
 }
 
+// A tab in the background skips its polls and catches up the moment it's shown again.
+const poll = () => void (document.hidden || refresh());
+const onVisible = () => void (document.hidden || refresh());
+
 function subscribe(l: () => void) {
   listeners.add(l);
   if (!timer) {
     refresh();
-    timer = setInterval(refresh, 3000);
+    timer = setInterval(poll, 3000);
+    document.addEventListener("visibilitychange", onVisible);
   }
   return () => {
     listeners.delete(l);
     if (!listeners.size) {
       clearInterval(timer);
       timer = undefined;
+      document.removeEventListener("visibilitychange", onVisible);
     }
   };
 }
@@ -319,7 +336,7 @@ export async function runJob(name: string): Promise<string[]> {
 
 export const addHoliday = (day: string, name: string) => post("/hrms/holidays", { day, name }).finally(refresh);
 export const removeHoliday = (day: string) => call("DELETE", `/hrms/holidays/${day}`).finally(refresh);
-export const resetDemo = () => post("/bot/reset").finally(() => ((meta = null), refresh()));
+export const resetDemo = () => post("/bot/reset").finally(() => ((meta = null), (lastSig = ""), refresh()));
 export const setOffline = (on: boolean) => post("/bot/admin/offline", { force_offline: on }).finally(refresh);
 export const lockPayroll = (month: string) => post(`/hrms/payroll/${month}/lock`);
 export const uploadPolicy = (filename: string, content: string) => post("/bot/admin/policies", { filename, content });

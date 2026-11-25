@@ -18,7 +18,7 @@ if not HRMS_DB.exists():
     seed.main()
 
 app = FastAPI(title="HRKonnekt + KonnektHRMS", description="Hackathon backend: /auth (sign-in), /hrms (dummy HRMS), /bot (chat + console), /api/me (22 tools, offline stubs), /api/tools (13 Kompass tools)")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"], allow_origin_regex=r"https://[a-z0-9-]+\.vercel\.app", allow_methods=["*"], allow_headers=["*"])
 app.include_router(auth_router)
 app.include_router(hrms_router)
 app.include_router(bot_router)
